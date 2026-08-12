@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Review and route meeting context into the systems that should remember it." />
+    <title>Meeting Context Router</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="masthead">
+      <a class="wordmark" href="/">Meeting Context Router</a>
+      <p class="strapline">The governed layer after the call.</p>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Proposal-first meeting memory</p>
+          <h1>Move the useful parts.<br />Keep the boundaries.</h1>
+        </div>
+        <p class="hero-copy">Recorder output arrives once, becomes one canonical record, and leaves only after you approve what each destination should know.</p>
+      </section>
+
+      <section class="control-strip" aria-label="Router controls">
+        <label>
+          <span>API token <small>kept in memory only</small></span>
+          <input id="api-token" type="password" autocomplete="off" placeholder="Optional on localhost" />
+        </label>
+        <button id="refresh" class="button secondary" type="button">Refresh queue</button>
+        <p id="system-status" class="system-status" role="status">Checking router…</p>
+      </section>
+
+      <section class="metric-row" aria-label="Queue summary">
+        <article><strong id="pending-count">—</strong><span>Pending</span></article>
+        <article><strong id="approved-count">—</strong><span>Approved</span></article>
+        <article><strong id="delivered-count">—</strong><span>Delivered</span></article>
+        <article><strong id="blocked-count">—</strong><span>Blocked</span></article>
+      </section>
+
+      <section class="workspace-grid">
+        <div class="queue-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Review queue</p>
+              <h2>Destination proposals</h2>
+            </div>
+            <label class="filter-label">Status
+              <select id="status-filter">
+                <option value="">All</option>
+                <option value="pending" selected>Pending</option>
+                <option value="approved">Approved</option>
+                <option value="blocked">Blocked</option>
+                <option value="failed">Failed</option>
+                <option value="delivered">Delivered</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </label>
+          </div>
+          <div id="proposal-list" class="proposal-list" aria-live="polite"></div>
+        </div>
+
+        <aside class="intake-panel">
+          <p class="eyebrow">Manual intake</p>
+          <h2>Test the route</h2>
+          <p>Paste a canonical manual meeting. Intake creates two proposals and delivers nothing.</p>
+          <textarea id="manual-payload" spellcheck="false" aria-label="Manual meeting JSON"></textarea>
+          <button id="import-meeting" class="button primary" type="button">Create proposals</button>
+          <p id="intake-status" class="small-status" role="status"></p>
+        </aside>
+      </section>
+    </main>
+
+    <footer>
+      <span>Direct adapters. Explicit authority. No n8n dependency.</span>
+      <a href="/health/ready">Readiness</a>
+    </footer>
+  </body>
+</html>

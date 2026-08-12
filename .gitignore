@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.local
+coverage/
+data/state.json
+data/state.json.tmp
+data/outbox/obsidian/*.md
+!.gitkeep
+*.log

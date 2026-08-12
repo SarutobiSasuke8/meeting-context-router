@@ -1,0 +1,17 @@
+{
+  "sourceMeetingId": "manual-example-001",
+  "title": "Partner working session",
+  "startedAt": "2026-08-12T09:00:00.000Z",
+  "endedAt": "2026-08-12T09:45:00.000Z",
+  "sourceUrl": null,
+  "participants": [
+    { "name": "Alexei Udall", "email": null, "external": false },
+    { "name": "Example Partner", "email": "partner@example.com", "external": true }
+  ],
+  "summary": "Reviewed the meeting context workflow and agreed to test the Obsidian route first.",
+  "decisions": ["Keep n8n outside the core architecture."],
+  "actionItems": [
+    { "description": "Run one quarantined dogfood import", "assigneeName": "Alexei Udall", "completed": false }
+  ],
+  "transcript": []
+}
