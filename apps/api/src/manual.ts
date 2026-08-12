@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { canonicalMeetingSchema, sha256, stableJson, type CanonicalMeeting } from "@meeting-context-router/core";
+import { agentMeetingIntakeSchema, canonicalMeetingSchema, sha256, stableJson, type AgentMeetingIntake, type CanonicalMeeting } from "@meeting-context-router/core";
 import { z } from "zod";
 
 export const manualIntakeSchema = z.object({
@@ -53,10 +53,43 @@ export function normalizeManualIntake(input: unknown, receivedAt = new Date().to
     transcript: parsed.transcript.map((segment) => ({ speaker: segment.speaker, email: segment.email ?? null, text: segment.text, timestamp: segment.timestamp ?? null })),
     provenance: {
       source: "manual",
+      transport: "manual",
       sourceMeetingId,
       sourceUrl: parsed.sourceUrl ?? null,
       receivedAt,
       sourceHash: sha256(stableJson({ ...parsed, sourceMeetingId })),
+      signatureVerified: false,
+    },
+    createdAt: receivedAt,
+  });
+}
+
+export function normalizeAgentIntake(input: unknown, receivedAt = new Date().toISOString()): CanonicalMeeting {
+  const parsed: AgentMeetingIntake = agentMeetingIntakeSchema.parse(input);
+  return canonicalMeetingSchema.parse({
+    id: randomUUID(),
+    title: parsed.title,
+    startedAt: parsed.startedAt,
+    endedAt: parsed.endedAt ?? null,
+    participants: parsed.participants.map((person) => ({ name: person.name, email: person.email ?? null, external: person.external ?? null })),
+    summary: parsed.summary,
+    actionItems: parsed.actionItems.map((item) => ({
+      description: item.description,
+      assigneeName: item.assigneeName ?? null,
+      assigneeEmail: item.assigneeEmail ?? null,
+      dueOn: item.dueOn ?? null,
+      completed: item.completed,
+      evidenceTimestamp: item.evidenceTimestamp ?? null,
+    })),
+    decisions: parsed.decisions,
+    transcript: parsed.transcript.map((segment) => ({ speaker: segment.speaker, email: segment.email ?? null, text: segment.text, timestamp: segment.timestamp ?? null })),
+    provenance: {
+      source: parsed.source,
+      transport: "mcp",
+      sourceMeetingId: parsed.sourceMeetingId,
+      sourceUrl: parsed.sourceUrl ?? null,
+      receivedAt,
+      sourceHash: sha256(stableJson(parsed)),
       signatureVerified: false,
     },
     createdAt: receivedAt,

@@ -1,9 +1,9 @@
 # Architecture
 
 ```text
-Fathom / manual / future sources
+Fathom / Fireflies / Granola / manual / source MCPs
               |
-      signed + validated intake
+ webhooks, API sync, or agent MCP bridge
               |
        canonical meeting record
               |
@@ -19,10 +19,27 @@ Fathom / manual / future sources
 
 ## Boundaries
 
-1. **Source adapters** verify authenticity where the source supports it and normalize vendor payloads.
+1. **Source adapters** verify authenticity where the source supports it and normalize vendor payloads. Fathom supports signed webhooks and API polling; Fireflies combines signed Webhooks V2 with a GraphQL transcript lookup; Granola uses its public notes API.
 2. **Core** owns the canonical model, hashes, proposal lifecycle and authority policy.
 3. **Destination adapters** receive a fixed proposal type and configured destination. They never choose an arbitrary URL or filesystem root from request input.
 4. **API/workbench** exposes intake and human control. It does not contain recorder-specific domain logic.
+5. **MCP bridge** lets an agent read a meeting through a vendor's official MCP and create pending router proposals. It intentionally exposes no approval or delivery tool.
+
+## MCP composition
+
+The router does not proxy or retain vendor OAuth sessions. An MCP-capable agent connects to an official source server and the local router bridge side by side:
+
+```text
+official Fathom / Fireflies / Granola MCP (read meeting)
+                         |
+                    agent context
+                         |
+Meeting Context Router MCP (create pending proposals only)
+                         |
+                    human review
+```
+
+This keeps vendor authorization in the vendor's supported OAuth flow and keeps destination authority in the router.
 
 ## Persistence
 

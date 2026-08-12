@@ -1,0 +1,20 @@
+{
+  "name": "@meeting-context-router/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/stdio.js",
+  "bin": { "meeting-context-router-mcp": "./dist/stdio.js" },
+  "scripts": {
+    "dev": "tsx src/stdio.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@meeting-context-router/core": "workspace:*",
+    "@modelcontextprotocol/server": "2.0.0",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": { "tsx": "^4.20.5" }
+}

@@ -12,7 +12,7 @@ const meeting: CanonicalMeeting = {
   actionItems: [{ description: "Ship the release", assigneeName: "Alex", assigneeEmail: "alex@example.com", dueOn: null, completed: false, evidenceTimestamp: "00:12:00" }],
   decisions: ["Launch on Friday"],
   transcript: [{ speaker: "Alex", email: "alex@example.com", text: "Ship Friday.", timestamp: "00:12:00" }],
-  provenance: { source: "manual", sourceMeetingId: "meeting-1", sourceUrl: null, receivedAt: "2026-08-12T09:31:00.000Z", sourceHash: "a".repeat(64), signatureVerified: false },
+  provenance: { source: "manual", transport: "manual", sourceMeetingId: "meeting-1", sourceUrl: null, receivedAt: "2026-08-12T09:31:00.000Z", sourceHash: "a".repeat(64), signatureVerified: false },
   createdAt: "2026-08-12T09:31:00.000Z",
 };
 

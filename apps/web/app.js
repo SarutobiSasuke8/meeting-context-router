@@ -100,7 +100,14 @@ async function refresh() {
     const selected = filter.value ? all.filter((proposal) => proposal.status === filter.value) : all;
     proposalList.replaceChildren(...(selected.length ? selected.map(renderProposal) : [element("p", "empty", "Nothing in this queue.")]));
     const health = await api("/health/ready");
-    systemStatus.textContent = `Ready · Fathom ${health.fathomConfigured ? "configured" : "off"} · CRM ${health.crmConfigured ? "configured" : "awaiting endpoint"}`;
+    const configured = (value) => value ? "on" : "off";
+    systemStatus.textContent = [
+      "Ready",
+      `Fathom API ${configured(health.sources?.fathom?.api)}`,
+      `Fireflies ${configured(health.sources?.fireflies?.webhook && health.sources?.fireflies?.api)}`,
+      `Granola API ${configured(health.sources?.granola?.api)}`,
+      `CRM ${health.crmConfigured ? "on" : "awaiting endpoint"}`,
+    ].join(" · ");
   } catch (error) {
     proposalList.replaceChildren(element("p", "empty", error.message));
     systemStatus.textContent = error.message;

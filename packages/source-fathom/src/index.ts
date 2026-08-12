@@ -1,5 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { canonicalMeetingSchema, sha256, type CanonicalMeeting } from "@meeting-context-router/core";
+import { canonicalMeetingSchema, sha256, stableJson, type CanonicalMeeting, type TransportKind } from "@meeting-context-router/core";
 import { z } from "zod";
 
 const personSchema = z.object({
@@ -8,7 +8,7 @@ const personSchema = z.object({
   is_external: z.boolean().nullable().optional(),
 }).loose();
 
-const fathomPayloadSchema = z.object({
+export const fathomPayloadSchema = z.object({
   title: z.string().trim().min(1).max(500),
   meeting_title: z.string().trim().max(500).nullable().optional(),
   recording_id: z.union([z.number().int().nonnegative(), z.string().trim().min(1).max(500)]),
@@ -40,6 +40,18 @@ const fathomPayloadSchema = z.object({
     assignee: personSchema.nullable().optional(),
   }).loose()).max(250).nullable().optional(),
 }).loose();
+
+const fathomListSchema = z.object({
+  limit: z.number().int().nullable(),
+  next_cursor: z.string().nullable(),
+  items: z.array(fathomPayloadSchema),
+});
+
+export interface FathomSyncOptions {
+  createdAfter?: string | undefined;
+  createdBefore?: string | undefined;
+  maxMeetings?: number | undefined;
+}
 
 export interface FathomWebhookHeaders {
   "webhook-id"?: string | undefined;
@@ -87,8 +99,12 @@ export function verifyFathomWebhook(
   });
 }
 
-export function normalizeFathomWebhook(rawBody: string, receivedAt = new Date().toISOString()): CanonicalMeeting {
-  const payload = fathomPayloadSchema.parse(JSON.parse(rawBody));
+export function normalizeFathomMeeting(
+  input: unknown,
+  options: { receivedAt?: string; transport: TransportKind; signatureVerified: boolean },
+): CanonicalMeeting {
+  const payload = fathomPayloadSchema.parse(input);
+  const receivedAt = options.receivedAt ?? new Date().toISOString();
   return canonicalMeetingSchema.parse({
     id: randomUUID(),
     title: payload.meeting_title || payload.title,
@@ -117,12 +133,49 @@ export function normalizeFathomWebhook(rawBody: string, receivedAt = new Date().
     })),
     provenance: {
       source: "fathom",
+      transport: options.transport,
       sourceMeetingId: String(payload.recording_id),
       sourceUrl: payload.share_url ?? payload.url ?? null,
       receivedAt,
-      sourceHash: sha256(rawBody),
-      signatureVerified: true,
+      sourceHash: sha256(stableJson(payload)),
+      signatureVerified: options.signatureVerified,
     },
     createdAt: receivedAt,
   });
+}
+
+export function normalizeFathomWebhook(rawBody: string, receivedAt = new Date().toISOString()): CanonicalMeeting {
+  return normalizeFathomMeeting(JSON.parse(rawBody), { receivedAt, transport: "webhook", signatureVerified: true });
+}
+
+export async function fetchFathomMeetings(
+  apiKey: string,
+  options: FathomSyncOptions = {},
+  fetchImpl: typeof fetch = fetch,
+): Promise<CanonicalMeeting[]> {
+  const maxMeetings = Math.min(Math.max(options.maxMeetings ?? 25, 1), 100);
+  const meetings: CanonicalMeeting[] = [];
+  let cursor: string | null = null;
+  do {
+    const url = new URL("https://api.fathom.ai/external/v1/meetings");
+    url.searchParams.set("include_action_items", "true");
+    url.searchParams.set("include_summary", "true");
+    url.searchParams.set("include_transcript", "true");
+    if (options.createdAfter) url.searchParams.set("created_after", options.createdAfter);
+    if (options.createdBefore) url.searchParams.set("created_before", options.createdBefore);
+    if (cursor) url.searchParams.set("cursor", cursor);
+    const response = await fetchImpl(url, {
+      headers: { "X-Api-Key": apiKey, Accept: "application/json" },
+      redirect: "error",
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) throw new Error(`Fathom API request failed with status ${response.status}`);
+    const page = fathomListSchema.parse(await response.json());
+    for (const item of page.items) {
+      meetings.push(normalizeFathomMeeting(item, { transport: "api", signatureVerified: false }));
+      if (meetings.length >= maxMeetings) return meetings;
+    }
+    cursor = page.next_cursor;
+  } while (cursor);
+  return meetings;
 }

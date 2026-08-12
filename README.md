@@ -20,8 +20,11 @@ n8n or Zapier may later connect through a generic webhook adapter, but neither b
 
 ## Current vertical slice
 
-- Manual JSON intake.
-- Fathom webhook intake with signed raw-body verification and replay tolerance.
+- Manual JSON and agent-MCP intake.
+- Fathom webhook intake plus direct REST API synchronization.
+- Fireflies signed Webhooks V2 with direct GraphQL transcript lookup.
+- Granola public API synchronization.
+- A proposal-only MCP bridge that composes with each vendor's official meeting-data MCP.
 - Canonical meeting, participant, transcript, action-item and provenance schemas.
 - Duplicate suppression by source meeting ID.
 - Proposal queue with approve, reject and explicit deliver states.
@@ -62,6 +65,81 @@ POST https://your-router.example/v1/intake/fathom
 Set `FATHOM_WEBHOOK_SECRET` to the `whsec_...` secret returned by Fathom. Verification follows Fathom's documented `webhook-id.webhook-timestamp.raw-body` HMAC-SHA256 scheme and rejects stale signatures.
 
 Reference: [Fathom webhook documentation](https://developers.fathom.ai/webhooks).
+
+For scheduled or manual API sync, also set `FATHOM_API_KEY` and call:
+
+```bash
+curl -X POST http://127.0.0.1:4300/v1/sources/fathom/sync \
+  -H "Content-Type: application/json" \
+  --data '{"maxMeetings":25}'
+```
+
+The client uses Fathom's fixed API origin and requests summaries, transcripts, and action items. Reference: [Fathom list meetings API](https://developers.fathom.ai/api-reference/meetings/list-meetings).
+
+## Fireflies
+
+Set `FIREFLIES_WEBHOOK_SECRET` and `FIREFLIES_API_KEY`, then configure Fireflies Webhooks V2 to send `meeting.summarized` events to:
+
+```text
+POST https://your-router.example/v1/intake/fireflies
+```
+
+The router verifies `X-Hub-Signature` over the raw body, rejects stale events, and retrieves the complete transcript from Fireflies' fixed GraphQL endpoint. `meeting.transcribed` is acknowledged but deliberately waits for the later summary event. References: [Fireflies Webhooks V2](https://docs.fireflies.ai/graphql-api/webhooks-v2) and [Transcript query](https://docs.fireflies.ai/graphql-api/query/transcript).
+
+## Granola
+
+Set `GRANOLA_API_KEY` and call:
+
+```bash
+curl -X POST http://127.0.0.1:4300/v1/sources/granola/sync \
+  -H "Content-Type: application/json" \
+  --data '{"maxNotes":25}'
+```
+
+The adapter lists accessible notes and retrieves each note with its transcript. Reference: [Granola API](https://docs.granola.ai/introduction).
+
+## MCP composition
+
+Fathom, Fireflies, and Granola each provide an official remote MCP for authenticated meeting data:
+
+| Source MCP | URL | Authentication |
+|---|---|---|
+| Fathom | `https://api.fathom.ai/mcp` | Browser OAuth |
+| Fireflies | `https://api.fireflies.ai/mcp` | OAuth or API key, depending on client |
+| Granola | `https://mcp.granola.ai/mcp` | Browser OAuth |
+
+The router's local MCP does not proxy those OAuth sessions. Connect a vendor MCP and the router MCP to the same agent. The agent reads a meeting from the vendor, then calls `meeting_router_create_proposals` with the normalized context. That tool can create pending proposals only; there is no MCP approval or delivery tool.
+
+Build the bridge:
+
+```bash
+pnpm --filter @meeting-context-router/mcp build
+```
+
+Example client configuration:
+
+```json
+{
+  "mcpServers": {
+    "meeting-context-router": {
+      "command": "node",
+      "args": ["C:\\Dev\\Projects\\Meeting Context Router\\apps\\mcp\\dist\\stdio.js"],
+      "env": {
+        "ROUTER_BASE_URL": "http://127.0.0.1:4300",
+        "MEETING_ROUTER_API_TOKEN": "set-in-your-client-secret-store"
+      }
+    }
+  }
+}
+```
+
+Available router tools:
+
+- `meeting_router_status` — readiness only.
+- `meeting_router_list_proposals` — read the review queue.
+- `meeting_router_create_proposals` — idempotently create pending proposals from normalized meeting context.
+
+Official setup references: [Fathom MCP](https://developers.fathom.ai/mcp-docs), [Fireflies MCP](https://docs.fireflies.ai/getting-started/mcp-configuration), and [Granola MCP](https://docs.granola.ai/help-center/sharing/integrations/mcp).
 
 ## Destination authority
 

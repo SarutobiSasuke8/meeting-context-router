@@ -69,4 +69,19 @@ describe("proposal-first routing API", () => {
     expect(delivery.json().data.proposal.status).toBe("blocked");
     expect(delivery.json().error.message).toContain("meeting/activity endpoint");
   });
+
+  it("accepts agent-supplied meeting context as pending proposals only", async () => {
+    const { app } = await testApp();
+    const intake = await app.inject({
+      method: "POST",
+      url: "/v1/intake/agent",
+      payload: { ...manualMeeting, source: "fireflies", sourceMeetingId: "agent-fireflies-1" },
+    });
+    expect(intake.statusCode).toBe(202);
+    const proposals = await app.inject({ method: "GET", url: "/v1/proposals" });
+    expect(proposals.json().data).toHaveLength(2);
+    expect((proposals.json().data as Array<{ status: string }>).every((proposal) => proposal.status === "pending")).toBe(true);
+    const meetings = await app.inject({ method: "GET", url: "/v1/meetings" });
+    expect(meetings.json().data[0].provenance.transport).toBe("mcp");
+  });
 });

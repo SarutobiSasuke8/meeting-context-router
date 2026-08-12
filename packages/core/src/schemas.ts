@@ -5,6 +5,8 @@ const optionalUrl = z.url().max(2_000).nullable();
 
 export const sourceKindSchema = z.enum(["manual", "fathom", "fireflies", "granola", "generic"]);
 export type SourceKind = z.infer<typeof sourceKindSchema>;
+export const transportKindSchema = z.enum(["manual", "webhook", "api", "mcp"]);
+export type TransportKind = z.infer<typeof transportKindSchema>;
 
 export const participantSchema = z.object({
   name: boundedText(200),
@@ -33,6 +35,7 @@ export type ActionItem = z.infer<typeof actionItemSchema>;
 
 export const provenanceSchema = z.object({
   source: sourceKindSchema,
+  transport: transportKindSchema.default("manual"),
   sourceMeetingId: boundedText(500),
   sourceUrl: optionalUrl,
   receivedAt: z.iso.datetime(),
@@ -55,6 +58,37 @@ export const canonicalMeetingSchema = z.object({
   createdAt: z.iso.datetime(),
 });
 export type CanonicalMeeting = z.infer<typeof canonicalMeetingSchema>;
+
+export const agentMeetingIntakeSchema = z.object({
+  source: z.enum(["fathom", "fireflies", "granola", "generic"]),
+  sourceMeetingId: boundedText(500),
+  title: boundedText(500),
+  startedAt: z.iso.datetime(),
+  endedAt: z.iso.datetime().nullable().optional(),
+  sourceUrl: optionalUrl.optional(),
+  participants: z.array(z.object({
+    name: boundedText(200),
+    email: z.email().max(320).nullable().optional(),
+    external: z.boolean().nullable().optional(),
+  })).max(250).default([]),
+  summary: z.string().trim().max(50_000).default(""),
+  actionItems: z.array(z.object({
+    description: boundedText(2_000),
+    assigneeName: z.string().trim().max(200).nullable().optional(),
+    assigneeEmail: z.email().max(320).nullable().optional(),
+    dueOn: z.iso.date().nullable().optional(),
+    completed: z.boolean().default(false),
+    evidenceTimestamp: z.string().trim().max(32).nullable().optional(),
+  })).max(250).default([]),
+  decisions: z.array(boundedText(2_000)).max(250).default([]),
+  transcript: z.array(z.object({
+    speaker: boundedText(200),
+    email: z.email().max(320).nullable().optional(),
+    text: boundedText(20_000),
+    timestamp: z.string().trim().max(32).nullable().optional(),
+  })).max(20_000).default([]),
+});
+export type AgentMeetingIntake = z.infer<typeof agentMeetingIntakeSchema>;
 
 export const proposalTargetSchema = z.enum(["crm", "obsidian"]);
 export const proposalStatusSchema = z.enum(["pending", "approved", "rejected", "delivered", "blocked", "failed"]);

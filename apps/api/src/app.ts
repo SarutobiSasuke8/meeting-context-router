@@ -10,12 +10,14 @@ import {
 } from "@meeting-context-router/core";
 import { CrmDeliveryBlockedError, deliverCrmProposal } from "@meeting-context-router/destination-crm";
 import { deliverObsidianProposal } from "@meeting-context-router/destination-obsidian";
-import { normalizeFathomWebhook, verifyFathomWebhook } from "@meeting-context-router/source-fathom";
+import { fetchFathomMeetings, normalizeFathomWebhook, verifyFathomWebhook } from "@meeting-context-router/source-fathom";
+import { fetchFirefliesTranscript, firefliesWebhookEventSchema, isFreshFirefliesEvent, verifyFirefliesWebhook } from "@meeting-context-router/source-fireflies";
+import { fetchGranolaNotes } from "@meeting-context-router/source-granola";
 import Fastify from "fastify";
 import rawBody from "fastify-raw-body";
 import { z } from "zod";
 import type { RouterConfig } from "./config.js";
-import { normalizeManualIntake } from "./manual.js";
+import { normalizeAgentIntake, normalizeManualIntake } from "./manual.js";
 import { JsonRouterStore, StoreConflictError, StoreNotFoundError } from "./store.js";
 
 const idSchema = z.uuid();
@@ -34,7 +36,7 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     bodyLimit: 2 * 1024 * 1024,
     logger: {
       level: config.environment === "test" ? "silent" : "info",
-      redact: ["req.headers.authorization", "req.headers.webhook-signature", "body", "transcript", "*.transcript"],
+      redact: ["req.headers.authorization", "req.headers.webhook-signature", "req.headers.x-hub-signature", "body", "transcript", "*.transcript"],
     },
     trustProxy: false,
   });
@@ -62,7 +64,7 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
 
   app.addHook("onRequest", async (request, reply) => {
     const publicPath = request.url === "/" || request.url.startsWith("/assets/") || request.url === "/app.js" || request.url === "/styles.css" || request.url.startsWith("/health/");
-    const signedWebhook = request.method === "POST" && request.url === "/v1/intake/fathom";
+    const signedWebhook = request.method === "POST" && ["/v1/intake/fathom", "/v1/intake/fireflies"].includes(request.url);
     if (publicPath || signedWebhook || !config.apiToken) return;
     if (!tokenMatches(config.apiToken, request.headers.authorization)) {
       return reply.code(401).send({ error: { code: "unauthorized", message: "A valid bearer token is required", requestId: request.id } });
@@ -70,7 +72,17 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
   });
 
   app.get("/health/live", async () => ({ ok: true, service: "meeting-context-router", version: "0.1.0" }));
-  app.get("/health/ready", async () => ({ ok: true, persistence: "atomic-json", crmConfigured: Boolean(config.crm.activityPath && config.crm.apiToken), fathomConfigured: Boolean(config.fathomWebhookSecret) }));
+  app.get("/health/ready", async () => ({
+    ok: true,
+    persistence: "atomic-json",
+    crmConfigured: Boolean(config.crm.activityPath && config.crm.apiToken),
+    sources: {
+      fathom: { webhook: Boolean(config.fathomWebhookSecret), api: Boolean(config.fathomApiKey) },
+      fireflies: { webhook: Boolean(config.firefliesWebhookSecret), api: Boolean(config.firefliesApiKey) },
+      granola: { api: Boolean(config.granolaApiKey) },
+      mcpBridge: true,
+    },
+  }));
 
   app.get("/v1/meetings", async () => ({ data: store.listMeetings() }));
   app.get("/v1/proposals", async (request) => {
@@ -84,6 +96,11 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
 
   app.post("/v1/intake/manual", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
     const result = await store.ingest(normalizeManualIntake(request.body));
+    return reply.code(result.duplicate ? 200 : 202).send({ data: { meetingId: result.meeting.id, proposalIds: result.proposals.map((proposal) => proposal.id), duplicate: result.duplicate } });
+  });
+
+  app.post("/v1/intake/agent", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+    const result = await store.ingest(normalizeAgentIntake(request.body));
     return reply.code(result.duplicate ? 200 : 202).send({ data: { meetingId: result.meeting.id, proposalIds: result.proposals.map((proposal) => proposal.id), duplicate: result.duplicate } });
   });
 
@@ -103,6 +120,66 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     }
     const result = await store.ingest(normalizeFathomWebhook(raw));
     return reply.code(result.duplicate ? 200 : 202).send({ data: { meetingId: result.meeting.id, proposalIds: result.proposals.map((proposal) => proposal.id), duplicate: result.duplicate } });
+  });
+
+  app.post("/v1/intake/fireflies", {
+    config: { rawBody: true, rateLimit: { max: 60, timeWindow: "1 minute" } },
+  }, async (request, reply) => {
+    if (!config.firefliesWebhookSecret || !config.firefliesApiKey) return reply.code(503).send({ error: { code: "fireflies_not_configured", message: "Fireflies webhook and API intake is not configured", requestId: request.id } });
+    const raw = request.rawBody?.toString("utf8");
+    if (!raw) return reply.code(400).send({ error: { code: "raw_body_missing", message: "Raw webhook body is required", requestId: request.id } });
+    const signatureValue = request.headers["x-hub-signature"];
+    const signature = Array.isArray(signatureValue) ? signatureValue[0] : signatureValue;
+    if (!verifyFirefliesWebhook(config.firefliesWebhookSecret, signature, raw)) {
+      return reply.code(401).send({ error: { code: "invalid_webhook_signature", message: "Webhook signature is invalid", requestId: request.id } });
+    }
+    const event = firefliesWebhookEventSchema.parse(JSON.parse(raw));
+    if (!isFreshFirefliesEvent(event.timestamp, undefined, config.firefliesToleranceSeconds)) {
+      return reply.code(401).send({ error: { code: "stale_webhook", message: "Webhook event is stale", requestId: request.id } });
+    }
+    if (event.event !== "meeting.summarized") return reply.code(202).send({ data: { accepted: true, ignored: true, reason: "awaiting meeting.summarized" } });
+    try {
+      const result = await store.ingest(await fetchFirefliesTranscript(config.firefliesApiKey, event.meeting_id));
+      return reply.code(result.duplicate ? 200 : 202).send({ data: { meetingId: result.meeting.id, proposalIds: result.proposals.map((proposal) => proposal.id), duplicate: result.duplicate } });
+    } catch (error) {
+      request.log.error({ err: error, source: "fireflies", sourceMeetingId: event.meeting_id }, "Meeting source fetch failed");
+      return reply.code(502).send({ error: { code: "source_fetch_failed", message: "Fireflies meeting data could not be fetched", requestId: request.id } });
+    }
+  });
+
+  const fathomSyncSchema = z.object({
+    createdAfter: z.iso.datetime().optional(),
+    createdBefore: z.iso.datetime().optional(),
+    maxMeetings: z.number().int().min(1).max(100).default(25),
+  }).default({ maxMeetings: 25 });
+  app.post("/v1/sources/fathom/sync", async (request, reply) => {
+    if (!config.fathomApiKey) return reply.code(503).send({ error: { code: "fathom_api_not_configured", message: "Fathom API sync is not configured", requestId: request.id } });
+    try {
+      const meetings = await fetchFathomMeetings(config.fathomApiKey, fathomSyncSchema.parse(request.body));
+      const results = await Promise.all(meetings.map((meeting) => store.ingest(meeting)));
+      return reply.code(202).send({ data: { fetched: meetings.length, created: results.filter((result) => !result.duplicate).length, duplicates: results.filter((result) => result.duplicate).length } });
+    } catch (error) {
+      request.log.error({ err: error, source: "fathom" }, "Meeting source sync failed");
+      return reply.code(502).send({ error: { code: "source_sync_failed", message: "Fathom meetings could not be synchronized", requestId: request.id } });
+    }
+  });
+
+  const granolaSyncSchema = z.object({
+    createdAfter: z.iso.date().optional(),
+    createdBefore: z.iso.date().optional(),
+    updatedAfter: z.iso.date().optional(),
+    maxNotes: z.number().int().min(1).max(100).default(25),
+  }).default({ maxNotes: 25 });
+  app.post("/v1/sources/granola/sync", async (request, reply) => {
+    if (!config.granolaApiKey) return reply.code(503).send({ error: { code: "granola_api_not_configured", message: "Granola API sync is not configured", requestId: request.id } });
+    try {
+      const meetings = await fetchGranolaNotes(config.granolaApiKey, granolaSyncSchema.parse(request.body));
+      const results = await Promise.all(meetings.map((meeting) => store.ingest(meeting)));
+      return reply.code(202).send({ data: { fetched: meetings.length, created: results.filter((result) => !result.duplicate).length, duplicates: results.filter((result) => result.duplicate).length } });
+    } catch (error) {
+      request.log.error({ err: error, source: "granola" }, "Meeting source sync failed");
+      return reply.code(502).send({ error: { code: "source_sync_failed", message: "Granola notes could not be synchronized", requestId: request.id } });
+    }
   });
 
   app.post("/v1/proposals/:id/approve", async (request) => {

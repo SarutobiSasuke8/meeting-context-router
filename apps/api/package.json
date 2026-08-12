@@ -17,6 +17,8 @@
     "@meeting-context-router/destination-crm": "workspace:*",
     "@meeting-context-router/destination-obsidian": "workspace:*",
     "@meeting-context-router/source-fathom": "workspace:*",
+    "@meeting-context-router/source-fireflies": "workspace:*",
+    "@meeting-context-router/source-granola": "workspace:*",
     "fastify": "^5.6.0",
     "fastify-raw-body": "^5.0.0",
     "zod": "^4.1.5"
