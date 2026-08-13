@@ -3,6 +3,10 @@ import { z } from "zod";
 
 const clientConfigSchema = z.object({
   ROUTER_BASE_URL: z.url().default("http://127.0.0.1:4300"),
+  // The bridge's own scoped credential (meeting:ingest + proposal:read only).
+  // Never give the bridge a reviewer or delivery credential.
+  MEETING_ROUTER_MCP_TOKEN: z.string().min(24).optional(),
+  // Legacy shared token, accepted for migration only.
   MEETING_ROUTER_API_TOKEN: z.string().min(24).optional(),
 });
 
@@ -17,7 +21,7 @@ export function loadRouterClientConfig(environment: NodeJS.ProcessEnv = process.
   if (!["http:", "https:"].includes(baseUrl.protocol) || baseUrl.username || baseUrl.password) {
     throw new Error("ROUTER_BASE_URL must be an HTTP(S) URL without embedded credentials");
   }
-  return { baseUrl, apiToken: parsed.MEETING_ROUTER_API_TOKEN ?? null };
+  return { baseUrl, apiToken: parsed.MEETING_ROUTER_MCP_TOKEN ?? parsed.MEETING_ROUTER_API_TOKEN ?? null };
 }
 
 export class RouterClient {

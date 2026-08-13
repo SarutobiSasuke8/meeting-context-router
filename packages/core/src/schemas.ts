@@ -91,7 +91,7 @@ export const agentMeetingIntakeSchema = z.object({
 export type AgentMeetingIntake = z.infer<typeof agentMeetingIntakeSchema>;
 
 export const proposalTargetSchema = z.enum(["crm", "obsidian"]);
-export const proposalStatusSchema = z.enum(["pending", "approved", "rejected", "delivered", "blocked", "failed"]);
+export const proposalStatusSchema = z.enum(["pending", "approved", "delivering", "rejected", "delivered", "blocked", "failed", "unknown"]);
 export type ProposalStatus = z.infer<typeof proposalStatusSchema>;
 
 export const routingProposalSchema = z.object({
@@ -111,11 +111,67 @@ export const routingProposalSchema = z.object({
 });
 export type RoutingProposal = z.infer<typeof routingProposalSchema>;
 
-export const routerStateSchema = z.object({
+export const deliveryOutcomeSchema = z.enum(["delivered", "blocked", "failed", "unknown"]);
+export type DeliveryOutcome = z.infer<typeof deliveryOutcomeSchema>;
+
+/**
+ * A durable record of one delivery attempt, persisted before the destination
+ * side effect is invoked. `outcome` stays null while the attempt holds the
+ * delivery lease; a crash leaves a null-outcome attempt that reconciliation
+ * resolves deterministically.
+ */
+export const deliveryAttemptSchema = z.object({
+  id: z.uuid(),
+  proposalId: z.uuid(),
+  actor: boundedText(120),
+  startedAt: z.iso.datetime(),
+  leaseExpiresAt: z.iso.datetime(),
+  finishedAt: z.iso.datetime().nullable(),
+  idempotencyKey: z.string().regex(/^[a-f0-9]{64}$/),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+  destinationStatus: z.number().int().nullable(),
+  destinationReceiptId: z.string().max(500).nullable(),
+  outcome: deliveryOutcomeSchema.nullable(),
+  error: z.string().max(2_000).nullable(),
+});
+export type DeliveryAttempt = z.infer<typeof deliveryAttemptSchema>;
+
+/** Append-only deletion evidence. Identifiers and hashes only, never content. */
+export const deletionEvidenceSchema = z.object({
+  id: z.uuid(),
+  subjectType: z.literal("meeting"),
+  subjectId: z.uuid(),
+  sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+  proposalIds: z.array(z.uuid()).max(1_000),
+  artifactsRemoved: z.array(z.string().max(500)).max(1_000),
+  actor: boundedText(120),
+  deletedAt: z.iso.datetime(),
+});
+export type DeletionEvidence = z.infer<typeof deletionEvidenceSchema>;
+
+const routerStateV1Schema = z.object({
   schemaVersion: z.literal(1),
   meetings: z.array(canonicalMeetingSchema),
   proposals: z.array(routingProposalSchema),
 });
+
+export const routerStateSchema = z.object({
+  schemaVersion: z.literal(2),
+  meetings: z.array(canonicalMeetingSchema),
+  proposals: z.array(routingProposalSchema),
+  deliveryAttempts: z.array(deliveryAttemptSchema),
+  deletionLog: z.array(deletionEvidenceSchema),
+});
 export type RouterState = z.infer<typeof routerStateSchema>;
 
-export const emptyRouterState = (): RouterState => ({ schemaVersion: 1, meetings: [], proposals: [] });
+export const emptyRouterState = (): RouterState => ({ schemaVersion: 2, meetings: [], proposals: [], deliveryAttempts: [], deletionLog: [] });
+
+/** Parses persisted state at any supported schema version and migrates it to the current shape. */
+export function migrateRouterState(raw: unknown): RouterState {
+  const versioned = z.object({ schemaVersion: z.number() }).loose().parse(raw);
+  if (versioned.schemaVersion === 1) {
+    const v1 = routerStateV1Schema.parse(raw);
+    return { schemaVersion: 2, meetings: v1.meetings, proposals: v1.proposals, deliveryAttempts: [], deletionLog: [] };
+  }
+  return routerStateSchema.parse(raw);
+}

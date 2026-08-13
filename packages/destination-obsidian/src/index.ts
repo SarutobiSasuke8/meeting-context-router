@@ -1,7 +1,14 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
-import type { RoutingProposal } from "@meeting-context-router/core";
+import { sha256, stableJson, type RoutingProposal } from "@meeting-context-router/core";
 import { z } from "zod";
+
+export class ObsidianArtifactConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ObsidianArtifactConflictError";
+  }
+}
 
 const payloadSchema = z.object({
   meetingId: z.uuid(),
@@ -34,7 +41,7 @@ function slug(value: string): string {
   return result || "meeting";
 }
 
-export function renderObsidianMeeting(proposal: RoutingProposal): { filename: string; markdown: string } {
+export function renderObsidianMeeting(proposal: RoutingProposal): { filename: string; markdown: string; contentHash: string } {
   if (proposal.target !== "obsidian" || proposal.operation !== "write_meeting_note") throw new Error("Unsupported Obsidian proposal");
   const payload = payloadSchema.parse(proposal.payload);
   const date = payload.startedAt.slice(0, 10);
@@ -47,12 +54,23 @@ export function renderObsidianMeeting(proposal: RoutingProposal): { filename: st
     ? payload.actionItems.map((item) => `- [${item.completed ? "x" : " "}] ${safeText(item.description)}${item.assigneeName ? ` — ${safeText(item.assigneeName)}` : ""}`).join("\n")
     : "- None extracted";
 
-  const markdown = `---\ntype: meeting-context\nmeeting_id: ${JSON.stringify(payload.meetingId)}\nsource: ${JSON.stringify(payload.source)}\nsource_meeting_id: ${JSON.stringify(payload.sourceMeetingId)}\nstarted_at: ${JSON.stringify(payload.startedAt)}\nmutability: review-first\n---\n\n# ${safeText(payload.title)}\n\n## Summary\n\n${safeText(payload.summary) || "No summary supplied."}\n\n## Participants\n\n${participantLines}\n\n## Decisions\n\n${decisionLines}\n\n## Action items\n\n${actionLines}\n\n## Provenance\n\n- Source: ${safeText(payload.source)}\n- Source meeting ID: ${safeText(payload.sourceMeetingId)}${payload.sourceUrl ? `\n- Source URL: ${payload.sourceUrl}` : ""}\n- Router proposal: ${proposal.id}\n`;
-  return { filename, markdown };
+  const contentHash = sha256(stableJson(proposal.payload));
+  const markdown = `---\ntype: meeting-context\nmeeting_id: ${JSON.stringify(payload.meetingId)}\nsource: ${JSON.stringify(payload.source)}\nsource_meeting_id: ${JSON.stringify(payload.sourceMeetingId)}\nstarted_at: ${JSON.stringify(payload.startedAt)}\nrouter_proposal_id: ${JSON.stringify(proposal.id)}\nrouter_content_hash: ${JSON.stringify(contentHash)}\nmutability: review-first\n---\n\n# ${safeText(payload.title)}\n\n## Summary\n\n${safeText(payload.summary) || "No summary supplied."}\n\n## Participants\n\n${participantLines}\n\n## Decisions\n\n${decisionLines}\n\n## Action items\n\n${actionLines}\n\n## Provenance\n\n- Source: ${safeText(payload.source)}\n- Source meeting ID: ${safeText(payload.sourceMeetingId)}${payload.sourceUrl ? `\n- Source URL: ${payload.sourceUrl}` : ""}\n- Router proposal: ${proposal.id}\n`;
+  return { filename, markdown, contentHash };
 }
 
-export async function deliverObsidianProposal(proposal: RoutingProposal, outputRoot: string): Promise<{ path: string; alreadyExisted: boolean }> {
-  const { filename, markdown } = renderObsidianMeeting(proposal);
+function embeddedFrontmatterValue(markdown: string, key: string): string | null {
+  const match = markdown.match(new RegExp(`^${key}: (".*?")$`, "m"));
+  if (!match) return null;
+  try {
+    return JSON.parse(match[1] as string) as string;
+  } catch {
+    return null;
+  }
+}
+
+export async function deliverObsidianProposal(proposal: RoutingProposal, outputRoot: string): Promise<{ path: string; filename: string; contentHash: string; alreadyExisted: boolean }> {
+  const { filename, markdown, contentHash } = renderObsidianMeeting(proposal);
   const root = resolve(outputRoot);
   const target = resolve(root, filename);
   const relation = relative(root, target);
@@ -60,9 +78,35 @@ export async function deliverObsidianProposal(proposal: RoutingProposal, outputR
   await mkdir(root, { recursive: true });
   try {
     await writeFile(target, markdown, { encoding: "utf8", flag: "wx" });
-    return { path: target, alreadyExisted: false };
+    return { path: target, filename, contentHash, alreadyExisted: false };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return { path: target, alreadyExisted: true };
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    // A pre-existing file only counts as a prior successful delivery when it
+    // embeds this proposal's id AND this payload's content hash. Anything else
+    // is a conflict that requires human review, never silent success.
+    const existing = await readFile(target, "utf8");
+    const existingProposalId = embeddedFrontmatterValue(existing, "router_proposal_id");
+    const existingContentHash = embeddedFrontmatterValue(existing, "router_content_hash");
+    if (existingProposalId === proposal.id && existingContentHash === contentHash) {
+      return { path: target, filename, contentHash, alreadyExisted: true };
+    }
+    throw new ObsidianArtifactConflictError(
+      "A different artifact already exists at the target path; the existing file does not match this proposal's id and content hash",
+    );
+  }
+}
+
+/** Removes a delivered artifact during meeting deletion, with containment checks. */
+export async function removeObsidianArtifact(outputRoot: string, filename: string): Promise<boolean> {
+  const root = resolve(outputRoot);
+  const target = resolve(root, filename);
+  const relation = relative(root, target);
+  if (!relation || relation.startsWith("..") || isAbsolute(relation)) throw new Error("Artifact path escaped the configured Obsidian root");
+  try {
+    await rm(target);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
   }
 }

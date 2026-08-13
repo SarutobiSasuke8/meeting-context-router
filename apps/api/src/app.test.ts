@@ -82,6 +82,6 @@ describe("proposal-first routing API", () => {
     expect(proposals.json().data).toHaveLength(2);
     expect((proposals.json().data as Array<{ status: string }>).every((proposal) => proposal.status === "pending")).toBe(true);
     const meetings = await app.inject({ method: "GET", url: "/v1/meetings" });
-    expect(meetings.json().data[0].provenance.transport).toBe("mcp");
+    expect(meetings.json().data[0].transport).toBe("mcp");
   });
 });

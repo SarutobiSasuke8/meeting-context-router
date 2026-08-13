@@ -8,15 +8,15 @@ import {
   proposalStatusSchema,
   type ProposalStatus,
 } from "@meeting-context-router/core";
-import { CrmDeliveryBlockedError, deliverCrmProposal } from "@meeting-context-router/destination-crm";
-import { deliverObsidianProposal } from "@meeting-context-router/destination-obsidian";
+import { CrmConfigurationError, CrmDeliveryAmbiguousError, CrmDeliveryBlockedError, deliverCrmProposal, validateCrmDestination } from "@meeting-context-router/destination-crm";
+import { deliverObsidianProposal, ObsidianArtifactConflictError, removeObsidianArtifact, renderObsidianMeeting } from "@meeting-context-router/destination-obsidian";
 import { fetchFathomMeetings, normalizeFathomWebhook, verifyFathomWebhook } from "@meeting-context-router/source-fathom";
 import { fetchFirefliesTranscript, firefliesWebhookEventSchema, isFreshFirefliesEvent, verifyFirefliesWebhook } from "@meeting-context-router/source-fireflies";
 import { fetchGranolaNotes } from "@meeting-context-router/source-granola";
 import Fastify from "fastify";
 import rawBody from "fastify-raw-body";
 import { z } from "zod";
-import type { RouterConfig } from "./config.js";
+import type { Principal, RouterConfig, Scope } from "./config.js";
 import { normalizeAgentIntake, normalizeManualIntake } from "./manual.js";
 import { JsonRouterStore, StoreConflictError, StoreNotFoundError } from "./store.js";
 
@@ -30,7 +30,39 @@ function tokenMatches(expected: string, authorization: string | undefined): bool
   return timingSafeEqual(expectedHash, actualHash);
 }
 
-export async function buildApp(config: RouterConfig, store = new JsonRouterStore(config.statePath)) {
+type RequestPrincipal = Pick<Principal, "id" | "type" | "scopes">;
+
+declare module "fastify" {
+  interface FastifyRequest {
+    principal: RequestPrincipal | null;
+  }
+}
+
+function resolvePrincipal(principals: Principal[], authorization: string | undefined): RequestPrincipal | null {
+  let matched: RequestPrincipal | null = null;
+  // Compare against every principal so timing does not reveal which token prefix matched.
+  for (const principal of principals) {
+    if (tokenMatches(principal.token, authorization)) {
+      matched = { id: principal.id, type: principal.type, scopes: principal.scopes };
+    }
+  }
+  return matched;
+}
+
+function principalAllows(principal: RequestPrincipal, scope: Scope): boolean {
+  return principal.scopes.includes(scope) || principal.scopes.includes("admin");
+}
+
+export async function buildApp(config: RouterConfig, store = new JsonRouterStore(config.statePath, { key: config.stateKey, previousKey: config.statePreviousKey })) {
+  // Configuration failures surface at startup, not during a delivery attempt.
+  if (config.crm.activityPath) {
+    try {
+      validateCrmDestination(config.crm);
+    } catch (error) {
+      if (error instanceof CrmConfigurationError) throw new Error(`CRM destination is misconfigured: ${error.message}`);
+      throw error;
+    }
+  }
   await store.init();
   const app = Fastify({
     bodyLimit: 2 * 1024 * 1024,
@@ -62,19 +94,64 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     dotfiles: "deny",
   });
 
+  app.decorateRequest("principal", null);
   app.addHook("onRequest", async (request, reply) => {
     const publicPath = request.url === "/" || request.url.startsWith("/assets/") || request.url === "/app.js" || request.url === "/styles.css" || request.url.startsWith("/health/");
     const signedWebhook = request.method === "POST" && ["/v1/intake/fathom", "/v1/intake/fireflies"].includes(request.url);
-    if (publicPath || signedWebhook || !config.apiToken) return;
-    if (!tokenMatches(config.apiToken, request.headers.authorization)) {
+    if (publicPath || signedWebhook) return;
+    if (config.principals.length === 0) {
+      // Loopback development mode without configured principals: config.ts
+      // refuses to start non-loopback or production deployments this way.
+      request.principal = { id: "anonymous-dev", type: "dev", scopes: ["admin"] };
+      return;
+    }
+    const principal = resolvePrincipal(config.principals, request.headers.authorization);
+    if (!principal) {
       return reply.code(401).send({ error: { code: "unauthorized", message: "A valid bearer token is required", requestId: request.id } });
     }
+    request.principal = principal;
   });
+
+  function requireScope(scope: Scope) {
+    return async (request: import("fastify").FastifyRequest, reply: import("fastify").FastifyReply) => {
+      const principal = request.principal;
+      if (!principal) {
+        return reply.code(401).send({ error: { code: "unauthorized", message: "A valid bearer token is required", requestId: request.id } });
+      }
+      if (!principalAllows(principal, scope)) {
+        request.log.warn({ principalId: principal.id, principalType: principal.type, scopes: principal.scopes, requiredScope: scope, requestId: request.id }, "Authorization denied");
+        return reply.code(403).send({ error: { code: "forbidden", message: `The ${scope} scope is required`, requestId: request.id } });
+      }
+    };
+  }
+
+  function auditAction(request: import("fastify").FastifyRequest, action: string, details: Record<string, unknown> = {}) {
+    const principal = request.principal;
+    request.log.info({
+      audit: true,
+      action,
+      principalId: principal?.id ?? "unauthenticated",
+      principalType: principal?.type ?? "none",
+      scopes: principal?.scopes ?? [],
+      requestId: request.id,
+      ...details,
+    }, `audit:${action}`);
+  }
+
+  // Data minimisation: transcripts are opt-in per deployment. When retention
+  // is off, transcript segments are dropped at the ingest boundary; the
+  // source hash still proves provenance.
+  const applyRetention = (meeting: import("@meeting-context-router/core").CanonicalMeeting) =>
+    config.retainTranscripts ? meeting : { ...meeting, transcript: [] };
 
   app.get("/health/live", async () => ({ ok: true, service: "meeting-context-router", version: "0.1.0" }));
   app.get("/health/ready", async () => ({
     ok: true,
     persistence: "atomic-json",
+    stateEncrypted: store.encrypted,
+    transcriptRetention: config.retainTranscripts,
+    meetingTtlDays: config.meetingTtlDays,
+    principalsConfigured: config.principals.length,
     crmConfigured: Boolean(config.crm.activityPath && config.crm.apiToken),
     sources: {
       fathom: { webhook: Boolean(config.fathomWebhookSecret), api: Boolean(config.fathomApiKey) },
@@ -84,23 +161,33 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     },
   }));
 
-  app.get("/v1/meetings", async () => ({ data: store.listMeetings() }));
-  app.get("/v1/proposals", async (request) => {
+  const meetingsQuerySchema = z.object({
+    limit: z.coerce.number().int().min(1).max(100).default(25),
+    offset: z.coerce.number().int().min(0).max(100_000).default(0),
+  });
+  app.get("/v1/meetings", { preHandler: requireScope("meeting:read") }, async (request) => {
+    const query = meetingsQuerySchema.parse(request.query);
+    const page = store.listMeetingSummaries(query.limit, query.offset);
+    return { data: page.meetings, total: page.total, limit: query.limit, offset: query.offset };
+  });
+  app.get("/v1/proposals", { preHandler: requireScope("proposal:read") }, async (request) => {
     const query = z.object({ status: proposalStatusSchema.optional() }).parse(request.query);
     return { data: store.listProposals(query.status as ProposalStatus | undefined) };
   });
-  app.get("/v1/proposals/:id", async (request) => {
+  app.get("/v1/proposals/:id", { preHandler: requireScope("proposal:read") }, async (request) => {
     const { id } = z.object({ id: idSchema }).parse(request.params);
     return { data: store.getProposal(id) };
   });
 
-  app.post("/v1/intake/manual", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
-    const result = await store.ingest(normalizeManualIntake(request.body));
+  app.post("/v1/intake/manual", { preHandler: requireScope("admin"), config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+    const result = await store.ingest(applyRetention(normalizeManualIntake(request.body)));
+    auditAction(request, "intake.manual", { meetingId: result.meeting.id, duplicate: result.duplicate });
     return reply.code(result.duplicate ? 200 : 202).send({ data: { meetingId: result.meeting.id, proposalIds: result.proposals.map((proposal) => proposal.id), duplicate: result.duplicate } });
   });
 
-  app.post("/v1/intake/agent", { config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
-    const result = await store.ingest(normalizeAgentIntake(request.body));
+  app.post("/v1/intake/agent", { preHandler: requireScope("meeting:ingest"), config: { rateLimit: { max: 30, timeWindow: "1 minute" } } }, async (request, reply) => {
+    const result = await store.ingest(applyRetention(normalizeAgentIntake(request.body)));
+    auditAction(request, "intake.agent", { meetingId: result.meeting.id, duplicate: result.duplicate });
     return reply.code(result.duplicate ? 200 : 202).send({ data: { meetingId: result.meeting.id, proposalIds: result.proposals.map((proposal) => proposal.id), duplicate: result.duplicate } });
   });
 
@@ -118,7 +205,7 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     if (!verifyFathomWebhook(config.fathomWebhookSecret, headers, raw, undefined, config.fathomToleranceSeconds)) {
       return reply.code(401).send({ error: { code: "invalid_webhook_signature", message: "Webhook signature is invalid or stale", requestId: request.id } });
     }
-    const result = await store.ingest(normalizeFathomWebhook(raw));
+    const result = await store.ingest(applyRetention(normalizeFathomWebhook(raw)));
     return reply.code(result.duplicate ? 200 : 202).send({ data: { meetingId: result.meeting.id, proposalIds: result.proposals.map((proposal) => proposal.id), duplicate: result.duplicate } });
   });
 
@@ -139,7 +226,7 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     }
     if (event.event !== "meeting.summarized") return reply.code(202).send({ data: { accepted: true, ignored: true, reason: "awaiting meeting.summarized" } });
     try {
-      const result = await store.ingest(await fetchFirefliesTranscript(config.firefliesApiKey, event.meeting_id));
+      const result = await store.ingest(applyRetention(await fetchFirefliesTranscript(config.firefliesApiKey, event.meeting_id)));
       return reply.code(result.duplicate ? 200 : 202).send({ data: { meetingId: result.meeting.id, proposalIds: result.proposals.map((proposal) => proposal.id), duplicate: result.duplicate } });
     } catch (error) {
       request.log.error({ err: error, source: "fireflies", sourceMeetingId: event.meeting_id }, "Meeting source fetch failed");
@@ -152,11 +239,11 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     createdBefore: z.iso.datetime().optional(),
     maxMeetings: z.number().int().min(1).max(100).default(25),
   }).default({ maxMeetings: 25 });
-  app.post("/v1/sources/fathom/sync", async (request, reply) => {
+  app.post("/v1/sources/fathom/sync", { preHandler: requireScope("source:sync") }, async (request, reply) => {
     if (!config.fathomApiKey) return reply.code(503).send({ error: { code: "fathom_api_not_configured", message: "Fathom API sync is not configured", requestId: request.id } });
     try {
       const meetings = await fetchFathomMeetings(config.fathomApiKey, fathomSyncSchema.parse(request.body));
-      const results = await Promise.all(meetings.map((meeting) => store.ingest(meeting)));
+      const results = await Promise.all(meetings.map((meeting) => store.ingest(applyRetention(meeting))));
       return reply.code(202).send({ data: { fetched: meetings.length, created: results.filter((result) => !result.duplicate).length, duplicates: results.filter((result) => result.duplicate).length } });
     } catch (error) {
       request.log.error({ err: error, source: "fathom" }, "Meeting source sync failed");
@@ -170,11 +257,11 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     updatedAfter: z.iso.date().optional(),
     maxNotes: z.number().int().min(1).max(100).default(25),
   }).default({ maxNotes: 25 });
-  app.post("/v1/sources/granola/sync", async (request, reply) => {
+  app.post("/v1/sources/granola/sync", { preHandler: requireScope("source:sync") }, async (request, reply) => {
     if (!config.granolaApiKey) return reply.code(503).send({ error: { code: "granola_api_not_configured", message: "Granola API sync is not configured", requestId: request.id } });
     try {
       const meetings = await fetchGranolaNotes(config.granolaApiKey, granolaSyncSchema.parse(request.body));
-      const results = await Promise.all(meetings.map((meeting) => store.ingest(meeting)));
+      const results = await Promise.all(meetings.map((meeting) => store.ingest(applyRetention(meeting))));
       return reply.code(202).send({ data: { fetched: meetings.length, created: results.filter((result) => !result.duplicate).length, duplicates: results.filter((result) => result.duplicate).length } });
     } catch (error) {
       request.log.error({ err: error, source: "granola" }, "Meeting source sync failed");
@@ -182,37 +269,102 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     }
   });
 
-  app.post("/v1/proposals/:id/approve", async (request) => {
+  app.post("/v1/proposals/:id/approve", { preHandler: requireScope("proposal:review") }, async (request) => {
     const { id } = z.object({ id: idSchema }).parse(request.params);
-    return { data: await store.reviewProposal(id, "approved") };
+    const data = await store.reviewProposal(id, "approved");
+    auditAction(request, "proposal.approve", { proposalId: id });
+    return { data };
   });
-  app.post("/v1/proposals/:id/reject", async (request) => {
+  app.post("/v1/proposals/:id/reject", { preHandler: requireScope("proposal:review") }, async (request) => {
     const { id } = z.object({ id: idSchema }).parse(request.params);
-    return { data: await store.reviewProposal(id, "rejected") };
+    const data = await store.reviewProposal(id, "rejected");
+    auditAction(request, "proposal.reject", { proposalId: id });
+    return { data };
   });
-  app.post("/v1/proposals/:id/deliver", async (request, reply) => {
+  app.post("/v1/proposals/:id/deliver", { preHandler: requireScope("proposal:deliver") }, async (request, reply) => {
     const { id } = z.object({ id: idSchema }).parse(request.params);
+    // Acquire the durable delivery lease BEFORE any destination side effect:
+    // the attempt record and `delivering` status are persisted first, so a
+    // crash can never leave a completed side effect looking retryable.
+    const attempt = await store.beginDelivery(id, request.principal?.id ?? "unauthenticated", config.deliveryLeaseSeconds);
     const proposal = store.getProposal(id);
-    if (!["approved", "blocked", "failed"].includes(proposal.status)) throw new StoreConflictError(`Proposal cannot be delivered from ${proposal.status}`);
+    auditAction(request, "proposal.deliver", { proposalId: id, attemptId: attempt.id, target: proposal.target });
     try {
       if (proposal.target === "obsidian") {
         const result = await deliverObsidianProposal(proposal, config.obsidianOutputRoot);
-        const updated = await store.recordDelivery(id, "delivered", null);
+        const updated = await store.finishDelivery(id, attempt.id, "delivered", { destinationReceiptId: result.filename });
         return { data: { proposal: updated, artifact: basename(result.path), alreadyExisted: result.alreadyExisted } };
       }
       const result = await deliverCrmProposal(proposal, config.crm);
-      const updated = await store.recordDelivery(id, "delivered", null);
-      return { data: { proposal: updated, destinationStatus: result.status } };
+      const updated = await store.finishDelivery(id, attempt.id, "delivered", { destinationStatus: result.status, destinationReceiptId: result.receiptId });
+      return { data: { proposal: updated, destinationStatus: result.status, destinationReceiptId: result.receiptId } };
     } catch (error) {
-      if (error instanceof CrmDeliveryBlockedError) {
-        const updated = await store.recordDelivery(id, "blocked", error.message);
+      if (error instanceof CrmDeliveryBlockedError || error instanceof ObsidianArtifactConflictError) {
+        const updated = await store.finishDelivery(id, attempt.id, "blocked", { error: error.message });
         return reply.code(409).send({ data: { proposal: updated }, error: { code: "destination_blocked", message: error.message, requestId: request.id } });
       }
+      if (error instanceof CrmDeliveryAmbiguousError) {
+        const updated = await store.finishDelivery(id, attempt.id, "unknown", { error: error.message });
+        return reply.code(502).send({ data: { proposal: updated }, error: { code: "delivery_unknown", message: "Delivery result is unknown; reconcile before retrying", requestId: request.id } });
+      }
       const message = error instanceof Error ? error.message.slice(0, 2_000) : "Destination delivery failed";
-      await store.recordDelivery(id, "failed", message);
+      await store.finishDelivery(id, attempt.id, "failed", { error: message });
       request.log.error({ err: error, proposalId: id, target: proposal.target }, "Destination delivery failed");
       return reply.code(502).send({ error: { code: "delivery_failed", message: "Destination delivery failed", requestId: request.id } });
     }
+  });
+
+  app.get("/v1/deliveries/dead-letter", { preHandler: requireScope("proposal:deliver") }, async () => ({
+    data: store.listDeadLetter(),
+  }));
+  app.get("/v1/proposals/:id/attempts", { preHandler: requireScope("proposal:read") }, async (request) => {
+    const { id } = z.object({ id: idSchema }).parse(request.params);
+    store.getProposal(id);
+    return { data: store.listDeliveryAttempts(id) };
+  });
+
+  app.get("/v1/meetings/:id", { preHandler: requireScope("meeting:read") }, async (request) => {
+    const { id } = z.object({ id: idSchema }).parse(request.params);
+    const query = z.object({ includeTranscript: z.enum(["true", "false"]).default("false") }).parse(request.query);
+    const meeting = store.getMeeting(id);
+    if (query.includeTranscript !== "true") return { data: { ...meeting, transcript: [] } };
+    return { data: meeting };
+  });
+
+  app.get("/v1/meetings/:id/export", { preHandler: requireScope("admin") }, async (request) => {
+    const { id } = z.object({ id: idSchema }).parse(request.params);
+    auditAction(request, "meeting.export", { meetingId: id });
+    return { data: store.exportMeeting(id) };
+  });
+
+  async function cascadeDelete(request: import("fastify").FastifyRequest, meetingId: string) {
+    const preview = store.previewMeetingDeletion(meetingId);
+    const artifactsRemoved: string[] = [];
+    for (const proposalId of preview.deliveredArtifacts) {
+      const proposal = store.getProposal(proposalId);
+      const rendered = renderObsidianMeeting(proposal);
+      if (await removeObsidianArtifact(config.obsidianOutputRoot, rendered.filename)) artifactsRemoved.push(rendered.filename);
+    }
+    const cascade = await store.deleteMeeting(meetingId, request.principal?.id ?? "unauthenticated", artifactsRemoved);
+    auditAction(request, "meeting.delete", { meetingId, proposalCount: cascade.proposalIds.length, artifactsRemoved: artifactsRemoved.length });
+    return cascade;
+  }
+
+  app.delete("/v1/meetings/:id", { preHandler: requireScope("admin") }, async (request) => {
+    const { id } = z.object({ id: idSchema }).parse(request.params);
+    const query = z.object({ dryRun: z.enum(["true", "false"]).default("false") }).parse(request.query);
+    if (query.dryRun === "true") return { data: { dryRun: true, cascade: store.previewMeetingDeletion(id) } };
+    return { data: { dryRun: false, cascade: await cascadeDelete(request, id) } };
+  });
+
+  app.post("/v1/retention/sweep", { preHandler: requireScope("admin") }, async (request, reply) => {
+    if (config.meetingTtlDays === null) return reply.code(409).send({ error: { code: "retention_not_configured", message: "MEETING_ROUTER_MEETING_TTL_DAYS is not configured", requestId: request.id } });
+    const body = z.object({ dryRun: z.boolean().default(false) }).default({ dryRun: false }).parse(request.body ?? {});
+    const expired = store.expiredMeetingIds(config.meetingTtlDays);
+    if (body.dryRun) return { data: { dryRun: true, expiredMeetingIds: expired } };
+    const cascades = [];
+    for (const meetingId of expired) cascades.push(await cascadeDelete(request, meetingId));
+    return { data: { dryRun: false, deleted: cascades } };
   });
 
   app.setNotFoundHandler((request, reply) => reply.code(404).send({ error: { code: "not_found", message: "Route not found", requestId: request.id } }));
