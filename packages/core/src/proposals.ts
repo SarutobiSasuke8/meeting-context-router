@@ -19,6 +19,14 @@ export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date
     reviewedAt: null,
     deliveredAt: null,
     lastError: null,
+    deliveryAttempt: 0,
+    deliveryActor: null,
+    leaseId: null,
+    leaseExpiresAt: null,
+    deliveryStartedAt: null,
+    deliveryFinishedAt: null,
+    destinationRequestId: null,
+    destinationResponseStatus: null,
   };
 
   const crmPayload = {
@@ -58,6 +66,7 @@ export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date
       operation: "create_meeting_activity",
       payload: crmPayload,
       idempotencyKey: sha256(`crm:create_meeting_activity:${stableJson(crmPayload)}`),
+      contentHash: sha256(stableJson(crmPayload)),
     },
     {
       ...base,
@@ -66,6 +75,7 @@ export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date
       operation: "write_meeting_note",
       payload: obsidianPayload,
       idempotencyKey: sha256(`obsidian:write_meeting_note:${stableJson(obsidianPayload)}`),
+      contentHash: sha256(stableJson(obsidianPayload)),
     },
   ];
 }

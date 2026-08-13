@@ -91,7 +91,7 @@ export const agentMeetingIntakeSchema = z.object({
 export type AgentMeetingIntake = z.infer<typeof agentMeetingIntakeSchema>;
 
 export const proposalTargetSchema = z.enum(["crm", "obsidian"]);
-export const proposalStatusSchema = z.enum(["pending", "approved", "rejected", "delivered", "blocked", "failed"]);
+export const proposalStatusSchema = z.enum(["pending", "approved", "rejected", "delivering", "delivered", "blocked", "failed", "unknown"]);
 export type ProposalStatus = z.infer<typeof proposalStatusSchema>;
 
 export const routingProposalSchema = z.object({
@@ -104,10 +104,21 @@ export const routingProposalSchema = z.object({
   confidence: z.number().min(0).max(1),
   status: proposalStatusSchema,
   idempotencyKey: z.string().regex(/^[a-f0-9]{64}$/),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/),
   createdAt: z.iso.datetime(),
   reviewedAt: z.iso.datetime().nullable(),
   deliveredAt: z.iso.datetime().nullable(),
   lastError: z.string().max(2_000).nullable(),
+  // Delivery lease / attempt bookkeeping, kept separate from the review lifecycle above
+  // so a crash mid-delivery is distinguishable from a proposal that was never attempted.
+  deliveryAttempt: z.number().int().min(0),
+  deliveryActor: z.string().max(200).nullable(),
+  leaseId: z.uuid().nullable(),
+  leaseExpiresAt: z.iso.datetime().nullable(),
+  deliveryStartedAt: z.iso.datetime().nullable(),
+  deliveryFinishedAt: z.iso.datetime().nullable(),
+  destinationRequestId: z.string().max(200).nullable(),
+  destinationResponseStatus: z.number().int().nullable(),
 });
 export type RoutingProposal = z.infer<typeof routingProposalSchema>;
 

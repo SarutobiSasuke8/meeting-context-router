@@ -1,7 +1,14 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { RoutingProposal } from "@meeting-context-router/core";
 import { z } from "zod";
+
+export class ObsidianDeliveryConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ObsidianDeliveryConflictError";
+  }
+}
 
 const payloadSchema = z.object({
   meetingId: z.uuid(),
@@ -47,8 +54,22 @@ export function renderObsidianMeeting(proposal: RoutingProposal): { filename: st
     ? payload.actionItems.map((item) => `- [${item.completed ? "x" : " "}] ${safeText(item.description)}${item.assigneeName ? ` — ${safeText(item.assigneeName)}` : ""}`).join("\n")
     : "- None extracted";
 
-  const markdown = `---\ntype: meeting-context\nmeeting_id: ${JSON.stringify(payload.meetingId)}\nsource: ${JSON.stringify(payload.source)}\nsource_meeting_id: ${JSON.stringify(payload.sourceMeetingId)}\nstarted_at: ${JSON.stringify(payload.startedAt)}\nmutability: review-first\n---\n\n# ${safeText(payload.title)}\n\n## Summary\n\n${safeText(payload.summary) || "No summary supplied."}\n\n## Participants\n\n${participantLines}\n\n## Decisions\n\n${decisionLines}\n\n## Action items\n\n${actionLines}\n\n## Provenance\n\n- Source: ${safeText(payload.source)}\n- Source meeting ID: ${safeText(payload.sourceMeetingId)}${payload.sourceUrl ? `\n- Source URL: ${payload.sourceUrl}` : ""}\n- Router proposal: ${proposal.id}\n`;
+  // proposal_id and content_hash are the machine-checkable identity of this artifact: on an
+  // EEXIST collision, delivery compares both against the file already on disk so a stale or
+  // unrelated file with the same name is never mistaken for a successful prior delivery.
+  const markdown = `---\ntype: meeting-context\nmeeting_id: ${JSON.stringify(payload.meetingId)}\nsource: ${JSON.stringify(payload.source)}\nsource_meeting_id: ${JSON.stringify(payload.sourceMeetingId)}\nstarted_at: ${JSON.stringify(payload.startedAt)}\nproposal_id: ${JSON.stringify(proposal.id)}\ncontent_hash: ${JSON.stringify(proposal.contentHash)}\nmutability: review-first\n---\n\n# ${safeText(payload.title)}\n\n## Summary\n\n${safeText(payload.summary) || "No summary supplied."}\n\n## Participants\n\n${participantLines}\n\n## Decisions\n\n${decisionLines}\n\n## Action items\n\n${actionLines}\n\n## Provenance\n\n- Source: ${safeText(payload.source)}\n- Source meeting ID: ${safeText(payload.sourceMeetingId)}${payload.sourceUrl ? `\n- Source URL: ${payload.sourceUrl}` : ""}\n- Router proposal: ${proposal.id}\n`;
   return { filename, markdown };
+}
+
+function frontmatterField(markdown: string, field: string): string | null {
+  const match = markdown.match(new RegExp(`^${field}: (.+)$`, "m"));
+  const value = match?.[1];
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 
 export async function deliverObsidianProposal(proposal: RoutingProposal, outputRoot: string): Promise<{ path: string; alreadyExisted: boolean }> {
@@ -62,7 +83,15 @@ export async function deliverObsidianProposal(proposal: RoutingProposal, outputR
     await writeFile(target, markdown, { encoding: "utf8", flag: "wx" });
     return { path: target, alreadyExisted: false };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") return { path: target, alreadyExisted: true };
-    throw error;
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    const existing = await readFile(target, "utf8");
+    const existingProposalId = frontmatterField(existing, "proposal_id");
+    const existingContentHash = frontmatterField(existing, "content_hash");
+    if (existingProposalId === proposal.id && existingContentHash === proposal.contentHash) {
+      return { path: target, alreadyExisted: true };
+    }
+    throw new ObsidianDeliveryConflictError(
+      `Obsidian artifact ${filename} already exists but does not match this delivery (existing proposal ${existingProposalId ?? "unknown"}); manual review required before overwriting`,
+    );
   }
 }

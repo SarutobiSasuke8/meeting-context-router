@@ -8,8 +8,8 @@ import {
   proposalStatusSchema,
   type ProposalStatus,
 } from "@meeting-context-router/core";
-import { CrmDeliveryBlockedError, deliverCrmProposal } from "@meeting-context-router/destination-crm";
-import { deliverObsidianProposal } from "@meeting-context-router/destination-obsidian";
+import { CrmDeliveryAmbiguousError, CrmDeliveryBlockedError, deliverCrmProposal } from "@meeting-context-router/destination-crm";
+import { deliverObsidianProposal, ObsidianDeliveryConflictError } from "@meeting-context-router/destination-obsidian";
 import { fetchFathomMeetings, normalizeFathomWebhook, verifyFathomWebhook } from "@meeting-context-router/source-fathom";
 import { fetchFirefliesTranscript, firefliesWebhookEventSchema, isFreshFirefliesEvent, verifyFirefliesWebhook } from "@meeting-context-router/source-fireflies";
 import { fetchGranolaNotes } from "@meeting-context-router/source-granola";
@@ -192,27 +192,37 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
   });
   app.post("/v1/proposals/:id/deliver", async (request, reply) => {
     const { id } = z.object({ id: idSchema }).parse(request.params);
-    const proposal = store.getProposal(id);
-    if (!["approved", "blocked", "failed"].includes(proposal.status)) throw new StoreConflictError(`Proposal cannot be delivered from ${proposal.status}`);
+    const { proposal, leaseId } = await store.acquireDeliveryLease(id, "api");
     try {
       if (proposal.target === "obsidian") {
         const result = await deliverObsidianProposal(proposal, config.obsidianOutputRoot);
-        const updated = await store.recordDelivery(id, "delivered", null);
+        const updated = await store.recordDeliveryResult(id, leaseId, "delivered", {});
         return { data: { proposal: updated, artifact: basename(result.path), alreadyExisted: result.alreadyExisted } };
       }
       const result = await deliverCrmProposal(proposal, config.crm);
-      const updated = await store.recordDelivery(id, "delivered", null);
+      const updated = await store.recordDeliveryResult(id, leaseId, "delivered", { destinationRequestId: result.requestId, destinationResponseStatus: result.status });
       return { data: { proposal: updated, destinationStatus: result.status } };
     } catch (error) {
-      if (error instanceof CrmDeliveryBlockedError) {
-        const updated = await store.recordDelivery(id, "blocked", error.message);
+      if (error instanceof CrmDeliveryBlockedError || error instanceof ObsidianDeliveryConflictError) {
+        const updated = await store.recordDeliveryResult(id, leaseId, "blocked", { error: error.message });
         return reply.code(409).send({ data: { proposal: updated }, error: { code: "destination_blocked", message: error.message, requestId: request.id } });
       }
+      if (error instanceof CrmDeliveryAmbiguousError) {
+        const updated = await store.recordDeliveryResult(id, leaseId, "unknown", { error: error.message });
+        request.log.error({ err: error, proposalId: id, target: proposal.target }, "Destination delivery outcome is ambiguous");
+        return reply.code(409).send({ data: { proposal: updated }, error: { code: "delivery_ambiguous", message: "Delivery outcome could not be confirmed and requires reconciliation before any retry", requestId: request.id } });
+      }
       const message = error instanceof Error ? error.message.slice(0, 2_000) : "Destination delivery failed";
-      await store.recordDelivery(id, "failed", message);
+      const updated = await store.recordDeliveryResult(id, leaseId, "failed", { error: message });
       request.log.error({ err: error, proposalId: id, target: proposal.target }, "Destination delivery failed");
-      return reply.code(502).send({ error: { code: "delivery_failed", message: "Destination delivery failed", requestId: request.id } });
+      return reply.code(502).send({ data: { proposal: updated }, error: { code: "delivery_failed", message: "Destination delivery failed", requestId: request.id } });
     }
+  });
+
+  app.post("/v1/proposals/:id/reconcile", async (request) => {
+    const { id } = z.object({ id: idSchema }).parse(request.params);
+    const body = z.object({ decision: z.enum(["retry", "delivered", "failed"]), note: z.string().trim().max(2_000).optional() }).parse(request.body);
+    return { data: await store.reconcileProposal(id, body.decision, body.note ?? null) };
   });
 
   app.setNotFoundHandler((request, reply) => reply.code(404).send({ error: { code: "not_found", message: "Route not found", requestId: request.id } }));
