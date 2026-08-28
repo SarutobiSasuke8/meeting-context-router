@@ -37,3 +37,7 @@ pnpm check
 ## Verification
 
 Behavior changes require a focused test. Security-sensitive changes require tests for invalid input, duplicate/replay behavior, and failure states. Keep the public repository free of secrets and real meeting content.
+
+## Process
+
+Audit fixes land through the open PR that carries them, never as a parallel direct-to-main commit. A direct-to-main superset orphans the PR into a permanent conflict state (this is how PR #5 was orphaned by 5aa6aaf); if the scope grows beyond the PR, widen the PR.

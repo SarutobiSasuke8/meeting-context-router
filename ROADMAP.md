@@ -20,8 +20,8 @@
 - [ ] Dogfood the official Fathom, Fireflies, and Granola MCP composition flow.
 - [ ] Participant matching preview against CRM people and companies.
 - [ ] Proposal editing before approval.
-- [ ] Delivery retry queue and dead-letter view.
-- [ ] Configurable retention and encrypted transcript storage.
+- [x] Delivery retry queue and dead-letter view. (5aa6aaf: durable delivery attempts with leases and receipts, `GET /v1/deliveries/dead-letter`, `GET /v1/proposals/:id/attempts`)
+- [x] Configurable retention and encrypted transcript storage. (5aa6aaf: transcripts opt-in at ingest, TTL retention sweep, cascade deletion, AES-256-GCM state encryption with key rotation)
 - [ ] Source/destination capability discovery.
 
 ## Later — optional edges
