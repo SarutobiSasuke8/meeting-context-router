@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { sha256, stableJson, type RoutingProposal } from "@meeting-context-router/core";
 import { z } from "zod";
@@ -59,13 +59,18 @@ export function renderObsidianMeeting(proposal: RoutingProposal): { filename: st
   return { filename, markdown, contentHash };
 }
 
-function embeddedFrontmatterValue(markdown: string, key: string): string | null {
-  const match = markdown.match(new RegExp(`^${key}: (".*?")$`, "m"));
-  if (!match) return null;
-  try {
-    return JSON.parse(match[1] as string) as string;
-  } catch {
-    return null;
+async function assertArtifactMatches(target: string, markdown: string): Promise<void> {
+  // Metadata can survive human edits. Check the complete file before treating
+  // it as router-owned, and do not follow an existing symbolic link.
+  const info = await lstat(target);
+  if (!info.isFile() || info.isSymbolicLink()) {
+    throw new ObsidianArtifactConflictError("The target path is not a regular note file; review the artifact before retrying");
+  }
+  const existing = await readFile(target);
+  if (!existing.equals(Buffer.from(markdown, "utf8"))) {
+    throw new ObsidianArtifactConflictError(
+      "The existing file does not match this proposal's complete rendered note; preserve any edits and review the artifact before retrying",
+    );
   }
 }
 
@@ -81,28 +86,20 @@ export async function deliverObsidianProposal(proposal: RoutingProposal, outputR
     return { path: target, filename, contentHash, alreadyExisted: false };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    // A pre-existing file only counts as a prior successful delivery when it
-    // embeds this proposal's id AND this payload's content hash. Anything else
-    // is a conflict that requires human review, never silent success.
-    const existing = await readFile(target, "utf8");
-    const existingProposalId = embeddedFrontmatterValue(existing, "router_proposal_id");
-    const existingContentHash = embeddedFrontmatterValue(existing, "router_content_hash");
-    if (existingProposalId === proposal.id && existingContentHash === contentHash) {
-      return { path: target, filename, contentHash, alreadyExisted: true };
-    }
-    throw new ObsidianArtifactConflictError(
-      "A different artifact already exists at the target path; the existing file does not match this proposal's id and content hash",
-    );
+    await assertArtifactMatches(target, markdown);
+    return { path: target, filename, contentHash, alreadyExisted: true };
   }
 }
 
-/** Removes a delivered artifact during meeting deletion, with containment checks. */
-export async function removeObsidianArtifact(outputRoot: string, filename: string): Promise<boolean> {
+/** Removes only an unchanged delivered note; edited artifacts require review. */
+export async function removeObsidianArtifact(proposal: RoutingProposal, outputRoot: string): Promise<boolean> {
+  const { filename, markdown } = renderObsidianMeeting(proposal);
   const root = resolve(outputRoot);
   const target = resolve(root, filename);
   const relation = relative(root, target);
   if (!relation || relation.startsWith("..") || isAbsolute(relation)) throw new Error("Artifact path escaped the configured Obsidian root");
   try {
+    await assertArtifactMatches(target, markdown);
     await rm(target);
     return true;
   } catch (error) {
