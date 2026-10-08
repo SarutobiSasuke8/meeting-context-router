@@ -1,0 +1,157 @@
+# mcp-eval contract suite for the meeting-context-router MCP bridge (apps/mcp).
+#
+# Run from the repository root:  npm run eval:contract
+# (builds the workspace, then runs: mcp-eval eval/mcp.suite.yaml)
+#
+# Offline: router-target.mjs starts the real router API on a random 127.0.0.1 port with a
+# throwaway state directory and a synthetic bridge token, then loads apps/mcp/dist/stdio.js.
+# No meeting source, CRM or Obsidian vault is contacted and no secret is read.
+#
+# Contracts run in order on one connection against one fresh router, so the state they build
+# up (one meeting, its pending proposals) is deterministic.
+#
+# Golden updates are reviewed code changes: run `mcp-eval eval/mcp.suite.yaml --update-goldens`
+# locally only, never in CI.
+version: 1
+name: meeting-context-router-mcp
+target:
+  transport: stdio
+  command: ["node", "router-target.mjs"]
+timeout_ms: 30000
+contracts:
+  # The bridge is proposal-first: it can read status, list proposals and create pending
+  # proposals. exact: true means an approve, deliver or direct CRM write tool appearing
+  # without a contract change fails the suite.
+  - name: tools_listed_exact
+    expect_tools:
+      - meeting_router_status
+      - meeting_router_list_proposals
+      - meeting_router_create_proposals
+    exact: true
+
+  - name: input_schemas
+    input_schema:
+      meeting_router_status: fixtures/meeting_router_status.input.schema.json
+      meeting_router_list_proposals: fixtures/meeting_router_list_proposals.input.schema.json
+      meeting_router_create_proposals: fixtures/meeting_router_create_proposals.input.schema.json
+
+  # Happy path: readiness of a fresh, offline router. Deterministic, so a full golden.
+  # No sources or CRM are configured, and only the scoped bridge principal exists.
+  - name: status_golden
+    tool: meeting_router_status
+    input: {}
+    assert:
+      golden: fixtures/status.golden.json
+
+  - name: list_proposals_empty_golden
+    tool: meeting_router_list_proposals
+    input: {}
+    assert:
+      result_schema: fixtures/list_proposals.result.schema.json
+      golden: fixtures/list_proposals.empty.golden.json
+
+  # Happy path: synthetic meeting context in, pending proposals out. Ids are random UUIDs, so
+  # only the duplicate flag is compared; the result schema checks the id shapes.
+  - name: create_proposals_golden
+    tool: meeting_router_create_proposals
+    input: &synthetic_meeting
+      source: generic
+      sourceMeetingId: eval-synthetic-meeting-001
+      title: Synthetic contract-suite meeting
+      startedAt: "2026-01-15T09:00:00.000Z"
+      endedAt: "2026-01-15T09:30:00.000Z"
+      participants:
+        - { name: Example Host, email: host@example.com, external: false }
+        - { name: Example Guest, email: guest@example.com, external: true }
+      summary: Agreed to trial the Obsidian route with a synthetic note.
+      actionItems:
+        - { description: Draft the synthetic follow-up note, assigneeName: Example Host }
+      decisions:
+        - Keep every update proposal-first.
+      transcript: []
+    assert:
+      result_schema: fixtures/create_proposals.result.schema.json
+      golden:
+        path: fixtures/create_proposals.golden.json
+        only_paths: ["data.duplicate"]
+
+  # Same source meeting again: deduplicated, no second set of proposals.
+  - name: create_proposals_idempotent
+    tool: meeting_router_create_proposals
+    input: *synthetic_meeting
+    assert:
+      result_schema: fixtures/create_proposals.result.schema.json
+      golden:
+        path: fixtures/create_proposals.duplicate.golden.json
+        only_paths: ["data.duplicate"]
+
+  # The proposals the bridge created are held for review, not delivered. Random ids and
+  # timestamps are dropped; targets, operations, status and payloads (transcripts excluded)
+  # are compared.
+  - name: created_proposals_are_pending_golden
+    tool: meeting_router_list_proposals
+    input: { status: pending }
+    assert:
+      result_schema: fixtures/list_proposals.result.schema.json
+      golden:
+        path: fixtures/list_proposals.pending.golden.json
+        ignore_paths:
+          - "data[].id"
+          - "data[].meetingId"
+          - "data[].idempotencyKey"
+          - "data[].createdAt"
+          - "data[].payload.meetingId"
+
+  # Fail closed: nothing reached a destination without review.
+  - name: nothing_delivered_without_review
+    tool: meeting_router_list_proposals
+    input: { status: delivered }
+    assert:
+      golden: fixtures/list_proposals.empty.golden.json
+
+  # Deny paths.
+
+  # The bridge has no approval tool. A client that tries to approve its own proposal gets a
+  # protocol error, not a silent success.
+  - name: deny_approve_tool_absent
+    tool: meeting_router_approve_proposal
+    input: { id: "00000000-0000-4000-8000-000000000000" }
+    assert:
+      error_code: INVALID_PARAMS
+
+  # No direct CRM write path: delivery is a reviewer action on the router, not a bridge tool.
+  - name: deny_deliver_tool_absent
+    tool: meeting_router_deliver_proposal
+    input: { id: "00000000-0000-4000-8000-000000000000" }
+    assert:
+      error_code: INVALID_PARAMS
+
+  # Intake from an unknown source is rejected by the input schema before any router call.
+  - name: deny_unknown_source
+    tool: meeting_router_create_proposals
+    input:
+      source: salesforce
+      sourceMeetingId: eval-synthetic-meeting-002
+      title: Unknown source
+      startedAt: "2026-01-15T10:00:00.000Z"
+    assert:
+      is_error: true
+      error_message: "source"
+
+  # Intake without a meeting id or start time is rejected.
+  - name: deny_incomplete_intake
+    tool: meeting_router_create_proposals
+    input:
+      source: generic
+      title: Missing required fields
+    assert:
+      is_error: true
+      error_message: "sourceMeetingId|startedAt"
+
+  # An unknown proposal status is rejected rather than widened to "all".
+  - name: deny_unknown_status_filter
+    tool: meeting_router_list_proposals
+    input: { status: auto_delivered }
+    assert:
+      is_error: true
+      error_message: "status"

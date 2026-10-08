@@ -139,6 +139,8 @@ Available router tools:
 - `meeting_router_list_proposals` — read the review queue.
 - `meeting_router_create_proposals` — idempotently create pending proposals from normalized meeting context.
 
+MCP contract suite: `npm run eval:contract` builds the workspace and runs [mcp-eval-harness](https://github.com/SarutobiSasuke8/mcp-eval-harness) against `eval/mcp.suite.yaml`. It pins the exact tool list, every input schema, golden happy paths and the proposal-first deny paths. It is offline: `eval/router-target.mjs` starts the router API on a random loopback port with throwaway state and a synthetic token. The `mcp-eval` workflow runs the same suite on pull requests.
+
 Official setup references: [Fathom MCP](https://developers.fathom.ai/mcp-docs), [Fireflies MCP](https://docs.fireflies.ai/getting-started/mcp-configuration), and [Granola MCP](https://docs.granola.ai/help-center/sharing/integrations/mcp).
 
 ## Destination authority

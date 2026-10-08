@@ -14,9 +14,11 @@
     "typecheck": "pnpm build && pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "check": "pnpm build && pnpm -r --if-present typecheck && pnpm test",
+    "eval:contract": "pnpm build && mcp-eval eval/mcp.suite.yaml",
     "format": "prettier --write ."
   },
   "devDependencies": {
+    "@sarutobi-sasuke/mcp-eval-harness": "github:SarutobiSasuke8/mcp-eval-harness#077c74a60ccd6d9061e35f882ffd3db5f5d17052",
     "@types/node": "^24.3.0",
     "prettier": "^3.6.2",
     "typescript": "^5.9.2",

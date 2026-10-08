@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "meeting_router_list_proposals result",
+  "type": "object",
+  "required": ["data"],
+  "additionalProperties": false,
+  "properties": {
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "meetingId", "target", "operation", "payload", "evidence", "confidence", "status", "idempotencyKey", "createdAt", "reviewedAt", "deliveredAt", "lastError"],
+        "properties": {
+          "target": { "enum": ["crm", "obsidian"] },
+          "status": { "enum": ["pending", "approved", "delivering", "rejected", "delivered", "blocked", "failed", "unknown"] }
+        }
+      }
+    }
+  }
+}

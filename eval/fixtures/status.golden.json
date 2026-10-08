@@ -1,0 +1,23 @@
+{
+  "crmConfigured": false,
+  "meetingTtlDays": null,
+  "ok": true,
+  "persistence": "atomic-json",
+  "principalsConfigured": 1,
+  "sources": {
+    "fathom": {
+      "api": false,
+      "webhook": false
+    },
+    "fireflies": {
+      "api": false,
+      "webhook": false
+    },
+    "granola": {
+      "api": false
+    },
+    "mcpBridge": true
+  },
+  "stateEncrypted": false,
+  "transcriptRetention": false
+}
