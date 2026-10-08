@@ -2,6 +2,13 @@
 
 Record failures that should never recur. Each entry should name the symptom, root cause, guardrail and test.
 
+## 2026-10-04 - MCR-05: edited Obsidian notes accepted or deleted
+
+- **Symptom:** A note whose body had been edited but whose router metadata was unchanged counted as a successful delivery on retry. Manual deletion and retention could also remove the edited note.
+- **Root cause:** Retry verification compared only embedded proposal id and payload hash. Cleanup checked path containment but did not verify file contents or ownership.
+- **Guardrail:** Compare the complete note bytes with the rendered proposal and refuse symbolic links or non-regular targets. Cleanup conflicts return `409 artifact_conflict` before removing that meeting's state. Missing artifacts remain idempotent; unchanged notes can still be reconciled and removed.
+- **Tests:** `apps/api/src/security.test.ts` reproduces edited-body retry, deletion and retention failures and verifies preserved notes, proposals and deletion evidence. `packages/destination-obsidian/src/index.test.ts` covers exact retries, repeated deletion, edited/replaced/truncated notes, directories and symbolic links. These cases use synthetic temporary files only.
+
 ## 2026-08-13 — MCR-01: CRM destination URL escape
 
 - **Symptom:** A crafted `CRM_MEETING_ACTIVITY_PATH` value (reproduced with `/\evil.example`) could resolve the delivery endpoint onto a different origin than the configured CRM base, sending the meeting payload and bearer token off-site.

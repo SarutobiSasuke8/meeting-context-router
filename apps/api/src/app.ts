@@ -343,7 +343,7 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     for (const proposalId of preview.deliveredArtifacts) {
       const proposal = store.getProposal(proposalId);
       const rendered = renderObsidianMeeting(proposal);
-      if (await removeObsidianArtifact(config.obsidianOutputRoot, rendered.filename)) artifactsRemoved.push(rendered.filename);
+      if (await removeObsidianArtifact(proposal, config.obsidianOutputRoot)) artifactsRemoved.push(rendered.filename);
     }
     const cascade = await store.deleteMeeting(meetingId, request.principal?.id ?? "unauthenticated", artifactsRemoved);
     auditAction(request, "meeting.delete", { meetingId, proposalCount: cascade.proposalIds.length, artifactsRemoved: artifactsRemoved.length });
@@ -372,6 +372,7 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     if (error instanceof z.ZodError) return reply.code(422).send({ error: { code: "validation_error", message: "Request validation failed", requestId: request.id, issues: error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })) } });
     if (error instanceof StoreNotFoundError) return reply.code(404).send({ error: { code: "not_found", message: error.message, requestId: request.id } });
     if (error instanceof StoreConflictError) return reply.code(409).send({ error: { code: "conflict", message: error.message, requestId: request.id } });
+    if (error instanceof ObsidianArtifactConflictError) return reply.code(409).send({ error: { code: "artifact_conflict", message: error.message, requestId: request.id } });
     request.log.error({ err: error }, "Meeting Context Router request failed");
     return reply.code(500).send({ error: { code: "internal_error", message: "Unexpected server error", requestId: request.id } });
   });

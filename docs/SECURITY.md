@@ -36,7 +36,7 @@ Data classes: source metadata and provenance (hashes, ids, timestamps), derived 
 - Transcript retention is opt-in per deployment (`MEETING_ROUTER_RETAIN_TRANSCRIPTS`, default `false`). When off, transcript segments are dropped at the ingest boundary; the source hash still proves provenance.
 - Default meeting reads return summaries and counts only; transcript text requires an explicit `includeTranscript=true` fetch on a single meeting and never appears in list responses or logs.
 - `MEETING_ROUTER_MEETING_TTL_DAYS` enables the deterministic retention sweep (`POST /v1/retention/sweep`, admin scope, dry-run supported). Expired meetings are deleted with the same cascade as manual deletion.
-- `DELETE /v1/meetings/:id` (admin) supports dry-run cascade reports, removes dependent proposals, deletes delivered Obsidian artifacts, and appends content-free deletion evidence (identifiers and hashes only) to an append-only log.
+- `DELETE /v1/meetings/:id` (admin) supports dry-run cascade reports, removes dependent proposals, deletes unchanged delivered Obsidian artifacts, and appends content-free deletion evidence (identifiers and hashes only) to an append-only log. Before removal, each note must be a regular file with bytes identical to the rendered proposal. An edited, replaced or non-regular artifact causes `409 artifact_conflict` and retains that meeting and its proposals for review. Missing artifacts are safe to retry. Retention uses the same check and stops at the first conflict; meetings already deleted earlier in a sweep remain deleted. Dry-run reports do not verify file contents.
 - `GET /v1/meetings/:id/export` (admin) returns the full meeting, its proposals, and delivery attempts for subject-access requests.
 - State encryption at rest: set `MEETING_ROUTER_STATE_KEY` (32 bytes, base64). Rotation: move the old key to `MEETING_ROUTER_STATE_KEY_PREVIOUS`, set the new key, restart; the store re-encrypts on startup and the previous key can then be removed. Key material lives only in deployment configuration, never in the state file.
 
@@ -45,7 +45,7 @@ Data classes: source metadata and provenance (hashes, ids, timestamps), derived 
 - Delivery acquires a durable lease first: the attempt record (actor, idempotency key, content hash, lease expiry) and the `delivering` status are persisted before any destination side effect, so a crash can never make a completed side effect look retryable.
 - Concurrent delivery of one proposal yields exactly one attempt; the loser receives `409`.
 - Ambiguous CRM results (timeout or network failure mid-flight) are recorded as `unknown`, never blindly retried; reconciliation reuses the same idempotency key. The CRM endpoint is expected to honour `idempotency-key` and return a stable receipt id.
-- Obsidian artifacts embed the proposal id and payload content hash. A pre-existing file counts as a prior delivery only when both match exactly; anything else is a conflict requiring review.
+- Obsidian artifacts embed the proposal id and payload content hash. A pre-existing file counts as a prior delivery only when the entire file matches the rendered note byte for byte, including its metadata. Body edits, truncation and even line-ending changes require review; metadata alone does not prove an unchanged delivery. Existing symbolic links and non-regular files are refused.
 - Expired `delivering` leases are reconciled deterministically after restart; `GET /v1/deliveries/dead-letter` lists proposals needing operator attention.
 
 ## Before internet deployment
@@ -53,5 +53,6 @@ Data classes: source metadata and provenance (hashes, ids, timestamps), derived 
 - Put the service behind a TLS reverse proxy with a request-size limit.
 - Store secrets in the deployment secret manager, not `.env` in source control.
 - Restrict the process user to the one approved output directory.
+- Keep that directory under trusted local control. The artifact checks protect edits already present when checked; they do not provide filesystem transactions against another process replacing or editing files during a check and removal. Preserve human edits elsewhere before resolving a conflict and retrying cleanup.
 - Back up the state store; verify an encrypted backup restores with the configured key.
 - Complete a threat model and recovery drill before processing client meetings.

@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { renderObsidianMeeting } from "@meeting-context-router/destination-obsidian";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { JsonRouterStore } from "./store.js";
@@ -164,9 +165,55 @@ describe("delivery leases and receipts", () => {
     expect(reconciled.outcome).toBe("unknown");
     expect(reconciled.error).toContain("lease expired");
   });
+
+  it("blocks recovery when a note body changed but its router metadata still matches", async () => {
+    const { app, config } = await securedApp();
+    const proposal = await approvedObsidianProposal(app, "edited-retry");
+    const detail = await app.inject({ method: "GET", url: `/v1/proposals/${proposal.id}`, headers: auth(REVIEWER_TOKEN) });
+    const rendered = renderObsidianMeeting(detail.json().data);
+    const edited = `${rendered.markdown}\nA human added this paragraph.\n`;
+    await mkdir(config.obsidianOutputRoot, { recursive: true });
+    const notePath = join(config.obsidianOutputRoot, rendered.filename);
+    await writeFile(notePath, edited, "utf8");
+
+    const delivery = await app.inject({ method: "POST", url: `/v1/proposals/${proposal.id}/deliver`, headers: auth(REVIEWER_TOKEN) });
+    expect(delivery.statusCode).toBe(409);
+    expect(delivery.json().data.proposal.status).toBe("blocked");
+    expect(await readFile(notePath, "utf8")).toBe(edited);
+  });
 });
 
 describe("retention, deletion, export, and encryption", () => {
+  it.each(["delete", "retention"])("preserves an edited delivered note and its meeting on %s", async (operation) => {
+    const { app, config } = await securedApp({ MEETING_ROUTER_MEETING_TTL_DAYS: "1" });
+    const proposal = await approvedObsidianProposal(app, `edited-${operation}`);
+    const delivered = await app.inject({ method: "POST", url: `/v1/proposals/${proposal.id}/deliver`, headers: auth(REVIEWER_TOKEN) });
+    expect(delivered.statusCode).toBe(200);
+    const detail = await app.inject({ method: "GET", url: `/v1/proposals/${proposal.id}`, headers: auth(REVIEWER_TOKEN) });
+    const rendered = renderObsidianMeeting(detail.json().data);
+    const notePath = join(config.obsidianOutputRoot, rendered.filename);
+    const edited = `${rendered.markdown}\nA human added this paragraph.\n`;
+    await writeFile(notePath, edited, "utf8");
+
+    // Only Date is faked; Fastify's request timers continue to run normally.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(Date.now() + 2 * 86_400_000));
+    try {
+      const response = await app.inject(operation === "delete"
+        ? { method: "DELETE", url: `/v1/meetings/${proposal.meetingId}`, headers: auth(ADMIN_TOKEN) }
+        : { method: "POST", url: "/v1/retention/sweep", headers: auth(ADMIN_TOKEN), payload: {} });
+      expect(response.statusCode).toBe(409);
+      expect(response.json().error.code).toBe("artifact_conflict");
+      expect(await readFile(notePath, "utf8")).toBe(edited);
+      const state = JSON.parse(await readFile(config.statePath, "utf8"));
+      expect(state.meetings).toHaveLength(1);
+      expect(state.proposals).toHaveLength(2);
+      expect(state.deletionLog).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("drops transcripts at ingest by default and keeps them only when opted in", async () => {
     const { app, config } = await securedApp();
     await app.inject({ method: "POST", url: "/v1/intake/agent", headers: auth(MCP_TOKEN), payload: { ...meeting("retain-1"), source: "generic" } });
