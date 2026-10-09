@@ -19,6 +19,12 @@ import {
 export class StoreConflictError extends Error {}
 export class StoreNotFoundError extends Error {}
 
+function assertNoDeliveryInProgress(proposals: RoutingProposal[]): void {
+  if (proposals.some((proposal) => proposal.status === "delivering")) {
+    throw new StoreConflictError("Meeting has a delivery in progress; let it finish, or reconcile its expired lease, before deleting");
+  }
+}
+
 export interface MeetingSummary {
   id: string;
   title: string;
@@ -303,6 +309,7 @@ export class JsonRouterStore {
     const meeting = this.state.meetings.find((candidate) => candidate.id === id);
     if (!meeting) throw new StoreNotFoundError("Meeting not found");
     const proposals = this.state.proposals.filter((proposal) => proposal.meetingId === id);
+    assertNoDeliveryInProgress(proposals);
     return {
       meetingId: id,
       sourceHash: meeting.provenance.sourceHash,
@@ -317,12 +324,18 @@ export class JsonRouterStore {
    * Deletes one meeting with cascade: content and dependent proposals are
    * removed, delivery attempts are redacted to identifiers only, and
    * append-only deletion evidence (no content) is recorded.
+   *
+   * Refused while any dependent proposal is `delivering`: the destination
+   * side effect may already exist, and removing the proposal would leave
+   * that artifact untracked once the delivery completes. The check runs
+   * inside the same serialised mutation as the removal.
    */
   async deleteMeeting(id: string, actor: string, artifactsRemoved: string[]): Promise<DeletionCascade> {
     return this.mutate((state) => {
       const meeting = state.meetings.find((candidate) => candidate.id === id);
       if (!meeting) throw new StoreNotFoundError("Meeting not found");
       const proposals = state.proposals.filter((proposal) => proposal.meetingId === id);
+      assertNoDeliveryInProgress(proposals);
       const proposalIds = new Set(proposals.map((proposal) => proposal.id));
       const cascade: DeletionCascade = {
         meetingId: id,
