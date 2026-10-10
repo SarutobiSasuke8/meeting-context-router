@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderObsidianMeeting } from "@meeting-context-router/destination-obsidian";
+import { deliverObsidianProposal, renderObsidianMeeting } from "@meeting-context-router/destination-obsidian";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { JsonRouterStore } from "./store.js";
@@ -255,6 +255,61 @@ describe("retention, deletion, export, and encryption", () => {
     const artifacts = await app.inject({ method: "GET", url: `/v1/meetings/${proposal.meetingId}`, headers: auth(REVIEWER_TOKEN) });
     expect(artifacts.statusCode).toBe(404);
     void root;
+  });
+
+  it("refuses deletion during an active delivery so completion cannot leave an untracked artifact", async () => {
+    const { app, config } = await securedApp();
+    const proposal = await approvedObsidianProposal(app, "delete-during-delivery");
+    await app.close();
+
+    // One store shared by the in-flight delivery and the API, as in production.
+    const store = new JsonRouterStore(config.statePath);
+    const live = await buildApp(config, store);
+    apps.push(live);
+
+    // The delivery has acquired its lease and written the note, but has not yet recorded its result.
+    const attempt = await store.beginDelivery(proposal.id, "in-flight", 300);
+    const written = await deliverObsidianProposal(store.getProposal(proposal.id), config.obsidianOutputRoot);
+
+    const dryRun = await live.inject({ method: "DELETE", url: `/v1/meetings/${proposal.meetingId}?dryRun=true`, headers: auth(ADMIN_TOKEN) });
+    expect(dryRun.statusCode).toBe(409);
+    const deletion = await live.inject({ method: "DELETE", url: `/v1/meetings/${proposal.meetingId}`, headers: auth(ADMIN_TOKEN) });
+    expect(deletion.statusCode).toBe(409);
+    expect(deletion.json().error.message).toContain("delivery in progress");
+    await expect(store.deleteMeeting(proposal.meetingId, "direct", [])).rejects.toThrow(/delivery in progress/);
+    expect(store.getMeeting(proposal.meetingId).id).toBe(proposal.meetingId);
+    expect(await readFile(written.path, "utf8")).toContain("Security review");
+
+    // Completion is still recorded against a tracked proposal.
+    const finished = await store.finishDelivery(proposal.id, attempt.id, "delivered", { destinationReceiptId: written.filename });
+    expect(finished.status).toBe("delivered");
+
+    // Once the delivery has finished, deletion removes the artifact it now knows about.
+    const retry = await live.inject({ method: "DELETE", url: `/v1/meetings/${proposal.meetingId}`, headers: auth(ADMIN_TOKEN) });
+    expect(retry.statusCode).toBe(200);
+    expect(retry.json().data.cascade.deliveredArtifacts).toEqual([written.filename]);
+    await expect(readFile(written.path, "utf8")).rejects.toThrow();
+  });
+
+  it("stops a retention sweep at a meeting whose delivery is in progress", async () => {
+    const { app, config } = await securedApp({ MEETING_ROUTER_MEETING_TTL_DAYS: "1" });
+    const proposal = await approvedObsidianProposal(app, "sweep-during-delivery");
+    await app.close();
+
+    const store = new JsonRouterStore(config.statePath);
+    const live = await buildApp(config, store);
+    apps.push(live);
+    await store.beginDelivery(proposal.id, "in-flight", 300);
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(Date.now() + 2 * 24 * 60 * 60 * 1_000));
+      const sweep = await live.inject({ method: "POST", url: "/v1/retention/sweep", headers: auth(ADMIN_TOKEN), payload: { dryRun: false } });
+      expect(sweep.statusCode).toBe(409);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(store.getMeeting(proposal.meetingId).id).toBe(proposal.meetingId);
   });
 
   it("sweeps expired meetings deterministically when a TTL is configured", async () => {

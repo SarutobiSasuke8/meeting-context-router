@@ -2,6 +2,13 @@
 
 Record failures that should never recur. Each entry should name the symptom, root cause, guardrail and test.
 
+## 2026-10-09 - MCR-06: deletion during an active delivery left an untracked note
+
+- **Symptom:** Deleting a meeting (or a retention sweep reaching it) while one of its Obsidian proposals was `delivering` succeeded. The delivery then wrote its note, `finishDelivery` failed with "Proposal not found", and the note stayed on disk with no proposal, attempt result or deletion evidence pointing at it.
+- **Root cause:** Deletion only cleaned up artifacts for `delivered` proposals and did not consider an open delivery lease, so it removed the proposal the in-flight delivery still needed to record its result.
+- **Guardrail:** `previewMeetingDeletion` and `deleteMeeting` refuse with `409 conflict` while any dependent proposal is `delivering`. The check in `deleteMeeting` runs inside the same serialised store mutation as the removal. An expired lease is reconciled through the existing retry path before deletion can proceed. A retention sweep stops at the first such meeting, as it does for artifact conflicts.
+- **Tests:** `apps/api/src/security.test.ts` ("refuses deletion during an active delivery so completion cannot leave an untracked artifact", "stops a retention sweep at a meeting whose delivery is in progress"). Both fail without the guard. Synthetic temporary files only.
+
 ## 2026-10-04 - MCR-05: edited Obsidian notes accepted or deleted
 
 - **Symptom:** A note whose body had been edited but whose router metadata was unchanged counted as a successful delivery on retry. Manual deletion and retention could also remove the edited note.
