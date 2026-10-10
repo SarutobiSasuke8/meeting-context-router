@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "status": {
+      "enum": [
+        "pending",
+        "approved",
+        "delivering",
+        "rejected",
+        "delivered",
+        "blocked",
+        "failed",
+        "unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "type": "object"
+}

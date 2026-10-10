@@ -4,3 +4,4 @@ packages:
 
 allowBuilds:
   esbuild: true
+  "@sarutobi-sasuke/mcp-eval-harness@https://codeload.github.com/SarutobiSasuke8/mcp-eval-harness/tar.gz/077c74a60ccd6d9061e35f882ffd3db5f5d17052": true

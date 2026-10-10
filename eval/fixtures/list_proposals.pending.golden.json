@@ -1,0 +1,92 @@
+{
+  "data": [
+    {
+      "confidence": 0.8,
+      "deliveredAt": null,
+      "evidence": [
+        "generic:eval-synthetic-meeting-001",
+        "1 source action item(s)"
+      ],
+      "lastError": null,
+      "operation": "create_meeting_activity",
+      "payload": {
+        "actionItems": [
+          {
+            "assigneeEmail": null,
+            "assigneeName": "Example Host",
+            "completed": false,
+            "description": "Draft the synthetic follow-up note",
+            "dueOn": null,
+            "evidenceTimestamp": null
+          }
+        ],
+        "decisions": [
+          "Keep every update proposal-first."
+        ],
+        "endedAt": "2026-01-15T09:30:00.000Z",
+        "participantEmails": [
+          "host@example.com",
+          "guest@example.com"
+        ],
+        "source": "generic",
+        "sourceMeetingId": "eval-synthetic-meeting-001",
+        "sourceUrl": null,
+        "startedAt": "2026-01-15T09:00:00.000Z",
+        "summary": "Agreed to trial the Obsidian route with a synthetic note.",
+        "title": "Synthetic contract-suite meeting",
+        "transcriptIncluded": false
+      },
+      "reviewedAt": null,
+      "status": "pending",
+      "target": "crm"
+    },
+    {
+      "confidence": 0.8,
+      "deliveredAt": null,
+      "evidence": [
+        "generic:eval-synthetic-meeting-001",
+        "1 source action item(s)"
+      ],
+      "lastError": null,
+      "operation": "write_meeting_note",
+      "payload": {
+        "actionItems": [
+          {
+            "assigneeEmail": null,
+            "assigneeName": "Example Host",
+            "completed": false,
+            "description": "Draft the synthetic follow-up note",
+            "dueOn": null,
+            "evidenceTimestamp": null
+          }
+        ],
+        "decisions": [
+          "Keep every update proposal-first."
+        ],
+        "endedAt": "2026-01-15T09:30:00.000Z",
+        "includeTranscript": false,
+        "participants": [
+          {
+            "email": "host@example.com",
+            "external": false,
+            "name": "Example Host"
+          },
+          {
+            "email": "guest@example.com",
+            "external": true,
+            "name": "Example Guest"
+          }
+        ],
+        "source": "generic",
+        "sourceMeetingId": "eval-synthetic-meeting-001",
+        "sourceUrl": null,
+        "startedAt": "2026-01-15T09:00:00.000Z",
+        "summary": "Agreed to trial the Obsidian route with a synthetic note.",
+        "title": "Synthetic contract-suite meeting"
+      },
+      "reviewedAt": null,
+      "status": "pending",
+      "target": "obsidian"
+    }
+  ]
+}
