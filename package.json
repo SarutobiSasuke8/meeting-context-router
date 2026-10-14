@@ -14,6 +14,7 @@
     "typecheck": "pnpm build && pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "check": "pnpm build && pnpm -r --if-present typecheck && pnpm test",
+    "verify": "pnpm typecheck && pnpm test && pnpm eval:contract",
     "eval:contract": "pnpm build && mcp-eval eval/mcp.suite.yaml",
     "format": "prettier --write ."
   },
