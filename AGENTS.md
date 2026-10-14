@@ -1,4 +1,4 @@
-# AGENTS.md — Meeting Context Router
+# AGENTS.md: Meeting Context Router
 
 ## Product goal
 
@@ -32,7 +32,11 @@ pnpm typecheck
 pnpm test
 pnpm build
 pnpm check
+pnpm eval:contract
+pnpm verify
 ```
+
+`pnpm verify` runs typecheck, the Vitest suites and the offline MCP contract suite (`pnpm eval:contract`). It does not lint: there is no ESLint config, and `prettier --check` is not clean. It does not call live vendors or read API keys. `evals/EVAL_PLAN.md` is a written plan, not a script.
 
 ## Verification
 

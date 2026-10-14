@@ -9,7 +9,7 @@
 // process.env or .env), and stdout stays reserved for MCP JSON-RPC because the router logger
 // is silent when NODE_ENV is "test".
 //
-// Requires `pnpm build` first (npm run eval:contract does this).
+// Requires `pnpm build` first (`pnpm eval:contract` does this).
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

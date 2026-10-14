@@ -1,6 +1,6 @@
 # mcp-eval contract suite for the meeting-context-router MCP bridge (apps/mcp).
 #
-# Run from the repository root:  npm run eval:contract
+# Run from the repository root:  pnpm eval:contract
 # (builds the workspace, then runs: mcp-eval eval/mcp.suite.yaml)
 #
 # Offline: router-target.mjs starts the real router API on a random 127.0.0.1 port with a
