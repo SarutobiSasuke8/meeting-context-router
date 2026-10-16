@@ -13,7 +13,7 @@
 - [x] Direct CRM adapter contract.
 - [x] Minimal review workbench.
 - [ ] Dogfood one real Fathom meeting into a quarantined Obsidian inbox.
-- [ ] Add the Agent CRM meeting/activity endpoint and complete an end-to-end CRM delivery.
+- [x] Add the Agent CRM meeting/activity endpoint and complete an end-to-end CRM delivery. (agent-crm PR #10 added `POST /v1/activities/meetings`; the router adapter now delivers to it with contract-checked payloads, recorded receipts and replay reconciliation; proof in `apps/api/src/crm-e2e.test.ts` and `QA/agent-crm-e2e-2026-10-16.md`)
 
 ## Next — useful beyond one stack
 

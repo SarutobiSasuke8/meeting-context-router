@@ -106,7 +106,7 @@ async function refresh() {
       `Fathom API ${configured(health.sources?.fathom?.api)}`,
       `Fireflies ${configured(health.sources?.fireflies?.webhook && health.sources?.fireflies?.api)}`,
       `Granola API ${configured(health.sources?.granola?.api)}`,
-      `CRM ${health.crmConfigured ? "on" : "awaiting endpoint"}`,
+      `CRM ${health.crmConfigured ? "on" : "token not configured"}`,
     ].join(" · ");
   } catch (error) {
     proposalList.replaceChildren(element("p", "empty", error.message));
