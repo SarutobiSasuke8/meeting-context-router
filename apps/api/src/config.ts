@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_CRM_MEETING_ACTIVITY_PATH } from "@meeting-context-router/destination-crm";
 import { z } from "zod";
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -58,7 +59,7 @@ const environmentSchema = z.object({
   OBSIDIAN_OUTPUT_ROOT: z.string().trim().min(1).default("./data/outbox/obsidian"),
   CRM_BASE_URL: z.url().default("http://127.0.0.1:4100"),
   CRM_API_TOKEN: z.string().min(16).optional(),
-  CRM_MEETING_ACTIVITY_PATH: z.string().trim().optional(),
+  CRM_MEETING_ACTIVITY_PATH: z.string().trim().default(DEFAULT_CRM_MEETING_ACTIVITY_PATH),
 });
 
 export type RouterConfig = ReturnType<typeof loadConfig>;
@@ -139,7 +140,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
     obsidianOutputRoot: resolve(repositoryRoot, parsed.OBSIDIAN_OUTPUT_ROOT),
     crm: {
       baseUrl: parsed.CRM_BASE_URL,
-      activityPath: parsed.CRM_MEETING_ACTIVITY_PATH ?? "",
+      activityPath: parsed.CRM_MEETING_ACTIVITY_PATH,
       apiToken: parsed.CRM_API_TOKEN ?? "",
     },
   };

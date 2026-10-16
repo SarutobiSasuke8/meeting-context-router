@@ -91,6 +91,9 @@ importers:
       '@meeting-context-router/core':
         specifier: workspace:*
         version: link:../core
+      zod:
+        specifier: ^4.1.5
+        version: 4.4.3
 
   packages/destination-obsidian:
     dependencies:

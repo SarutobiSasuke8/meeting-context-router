@@ -8,7 +8,7 @@ import {
   proposalStatusSchema,
   type ProposalStatus,
 } from "@meeting-context-router/core";
-import { CrmConfigurationError, CrmDeliveryAmbiguousError, CrmDeliveryBlockedError, deliverCrmProposal, validateCrmDestination } from "@meeting-context-router/destination-crm";
+import { CrmConfigurationError, CrmDeliveryAmbiguousError, CrmDeliveryBlockedError, CrmDeliveryRejectedError, deliverCrmProposal, validateCrmDestination } from "@meeting-context-router/destination-crm";
 import { deliverObsidianProposal, ObsidianArtifactConflictError, removeObsidianArtifact, renderObsidianMeeting } from "@meeting-context-router/destination-obsidian";
 import { fetchFathomMeetings, normalizeFathomWebhook, verifyFathomWebhook } from "@meeting-context-router/source-fathom";
 import { fetchFirefliesTranscript, firefliesWebhookEventSchema, isFreshFirefliesEvent, verifyFirefliesWebhook } from "@meeting-context-router/source-fireflies";
@@ -297,9 +297,14 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
       }
       const result = await deliverCrmProposal(proposal, config.crm);
       const updated = await store.finishDelivery(id, attempt.id, "delivered", { destinationStatus: result.status, destinationReceiptId: result.receiptId });
-      return { data: { proposal: updated, destinationStatus: result.status, destinationReceiptId: result.receiptId } };
+      auditAction(request, "proposal.delivered", { proposalId: id, attemptId: attempt.id, target: "crm", destinationStatus: result.status, replayed: result.replayed, matchedPersonCount: result.matchedPersonCount });
+      return { data: { proposal: updated, destinationStatus: result.status, destinationReceiptId: result.receiptId, replayed: result.replayed, matchedPersonCount: result.matchedPersonCount } };
     } catch (error) {
-      if (error instanceof CrmDeliveryBlockedError || error instanceof ObsidianArtifactConflictError) {
+      // Answers that will not change on retry (bad credential or scope, wrong
+      // route, contract violation, idempotency conflict) are blocked for an
+      // operator; transient CRM answers fall through to `failed` and may be retried.
+      const blocked = error instanceof CrmDeliveryBlockedError || error instanceof ObsidianArtifactConflictError || (error instanceof CrmDeliveryRejectedError && !error.retryable);
+      if (blocked) {
         const updated = await store.finishDelivery(id, attempt.id, "blocked", { error: error.message });
         return reply.code(409).send({ data: { proposal: updated }, error: { code: "destination_blocked", message: error.message, requestId: request.id } });
       }

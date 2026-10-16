@@ -44,7 +44,7 @@ Data classes: source metadata and provenance (hashes, ids, timestamps), derived 
 
 - Delivery acquires a durable lease first: the attempt record (actor, idempotency key, content hash, lease expiry) and the `delivering` status are persisted before any destination side effect, so a crash can never make a completed side effect look retryable.
 - Concurrent delivery of one proposal yields exactly one attempt; the loser receives `409`.
-- Ambiguous CRM results (timeout or network failure mid-flight) are recorded as `unknown`, never blindly retried; reconciliation reuses the same idempotency key. The CRM endpoint is expected to honour `idempotency-key` and return a stable receipt id.
+- Ambiguous CRM results (timeout or network failure mid-flight) are recorded as `unknown`, never blindly retried; reconciliation reuses the same idempotency key. The Agent CRM meeting activity endpoint honours `Idempotency-Key` and returns the original record with a stable receipt id on replay; a `2xx` without a recognisable receipt is also recorded as `unknown`. CRM answers that will not change on retry (credential, scope, route, contract, idempotency conflict) are recorded as `blocked`; transient answers as `failed`.
 - Obsidian artifacts embed the proposal id and payload content hash. A pre-existing file counts as a prior delivery only when the entire file matches the rendered note byte for byte, including its metadata. Body edits, truncation and even line-ending changes require review; metadata alone does not prove an unchanged delivery. Existing symbolic links and non-regular files are refused.
 - Expired `delivering` leases are reconciled deterministically after restart; `GET /v1/deliveries/dead-letter` lists proposals needing operator attention.
 
