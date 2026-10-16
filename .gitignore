@@ -6,5 +6,6 @@ coverage/
 data/state.json
 data/state.json.tmp
 data/outbox/obsidian/*.md
+data/quarantine/
 !.gitkeep
 *.log

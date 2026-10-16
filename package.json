@@ -10,6 +10,7 @@
   },
   "scripts": {
     "dev": "pnpm --filter @meeting-context-router/api dev",
+    "dogfood:fathom": "pnpm build && node apps/api/dist/dogfood.js",
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm build && pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",

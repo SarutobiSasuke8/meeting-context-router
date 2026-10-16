@@ -115,6 +115,32 @@ pnpm --filter @meeting-context-router/mcp build
 
 ## Fathom
 
+### Offline quarantine preview
+
+Run one synthetic, scrubbed Fathom export through the existing normaliser,
+proposal builder and Obsidian renderer:
+
+```bash
+pnpm dogfood:fathom examples/fathom-scrubbed.json
+```
+
+The command writes one `fathom-<source-hash>.proposal.md` under the ignored
+`data/quarantine/obsidian-inbox/` in this repository. The note starts with
+`type: quarantined-routing-proposal`, `status: pending`, `dry_run: true`, the
+source meeting ID and SHA-256, then a clearly labelled proposed Obsidian note.
+The fixture is synthetic and contains no real meeting or personal content.
+The preview includes the summary and action items, with no transcript.
+
+To try an export later, pass the path to one Fathom meeting JSON object matching
+the fixture shape. Keep private exports outside Git. A repeat of the same parsed
+source fails without overwriting the first preview or operator edits.
+
+This command is offline: it does not read runtime configuration or API keys,
+contact vendors or CRM, change router state, approve proposals or deliver to an
+Obsidian vault. The imported source has no verified webhook signature. Review
+the quarantine note as untrusted source content; approval and delivery remain
+separate actions in the normal router workflow.
+
 Configure Fathom to send meeting content to:
 
 ```text
