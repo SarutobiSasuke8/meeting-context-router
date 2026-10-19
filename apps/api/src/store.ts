@@ -3,6 +3,8 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   createRoutingProposals,
+  applyProposalEdit,
+  proposalEditSchema,
   emptyRouterState,
   migrateRouterState,
   routerStateSchema,
@@ -12,6 +14,7 @@ import {
   type DeliveryAttempt,
   type DeliveryOutcome,
   type ProposalStatus,
+  type ProposalEdit,
   type RouterState,
   type RoutingProposal,
 } from "@meeting-context-router/core";
@@ -205,6 +208,21 @@ export class JsonRouterStore {
       state.meetings.push(meeting);
       state.proposals.push(...proposals);
       return { meeting, proposals, duplicate: false };
+    });
+  }
+
+  async editProposal(id: string, input: ProposalEdit, actor: string): Promise<RoutingProposal> {
+    const edit = proposalEditSchema.parse(input);
+    return this.mutate((state) => {
+      const index = state.proposals.findIndex((candidate) => candidate.id === id);
+      const proposal = state.proposals[index];
+      if (!proposal) throw new StoreNotFoundError("Proposal not found");
+      if (proposal.status !== "pending") throw new StoreConflictError(`Proposal cannot be edited from ${proposal.status}`);
+      if ((proposal.editHistory?.length ?? 0) !== edit.expectedRevision) throw new StoreConflictError("Proposal changed; reload it before editing");
+      if (edit.expectedRevision >= 1_000) throw new StoreConflictError("Proposal edit history limit reached");
+      const edited = applyProposalEdit(proposal, edit, actor);
+      state.proposals[index] = edited;
+      return edited;
     });
   }
 

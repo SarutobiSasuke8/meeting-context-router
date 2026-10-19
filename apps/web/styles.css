@@ -91,3 +91,7 @@ footer { width: min(1440px, 90vw); min-height: 72px; margin: 0 auto; display: fl
   .section-heading { align-items: start; gap: 20px; }
   .proposal-actions { flex-wrap: wrap; }
 }
+.proposal-editor { display: grid; gap: 1rem; padding-block: 1rem; }
+.proposal-editor label { display: grid; gap: .4rem; }
+.proposal-editor textarea { min-height: 7rem; width: 100%; box-sizing: border-box; }
+.proposal-editor input { width: 100%; box-sizing: border-box; }

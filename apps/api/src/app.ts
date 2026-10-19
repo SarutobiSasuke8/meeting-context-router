@@ -6,6 +6,7 @@ import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import {
   proposalStatusSchema,
+  proposalEditSchema,
   type ProposalStatus,
 } from "@meeting-context-router/core";
 import { CrmConfigurationError, CrmDeliveryAmbiguousError, CrmDeliveryBlockedError, CrmDeliveryRejectedError, deliverCrmProposal, validateCrmDestination } from "@meeting-context-router/destination-crm";
@@ -267,6 +268,14 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
       request.log.error({ err: error, source: "granola" }, "Meeting source sync failed");
       return reply.code(502).send({ error: { code: "source_sync_failed", message: "Granola notes could not be synchronized", requestId: request.id } });
     }
+  });
+
+  app.patch("/v1/proposals/:id", { preHandler: requireScope("proposal:review") }, async (request) => {
+    const { id } = z.object({ id: idSchema }).parse(request.params);
+    const edit = proposalEditSchema.parse(request.body);
+    const data = await store.editProposal(id, edit, request.principal!.id);
+    auditAction(request, "proposal.edit", { proposalId: id, revision: data.editHistory?.length });
+    return { data };
   });
 
   app.post("/v1/proposals/:id/approve", { preHandler: requireScope("proposal:review") }, async (request) => {
