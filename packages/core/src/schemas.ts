@@ -94,6 +94,25 @@ export const proposalTargetSchema = z.enum(["crm", "obsidian"]);
 export const proposalStatusSchema = z.enum(["pending", "approved", "delivering", "rejected", "delivered", "blocked", "failed", "unknown"]);
 export type ProposalStatus = z.infer<typeof proposalStatusSchema>;
 
+export const proposalEditableFieldsSchema = z.object({
+  title: boundedText(500),
+  summary: z.string().trim().max(50_000),
+  actionItems: z.array(actionItemSchema).max(250),
+  targetNotes: z.array(boundedText(500)).max(100),
+}).strict();
+export const proposalEditSchema = z.object({
+  expectedRevision: z.number().int().min(0).max(1_000),
+  changes: proposalEditableFieldsSchema.partial().refine((value) => Object.keys(value).length > 0, "Supply at least one editable field"),
+}).strict();
+export type ProposalEdit = z.infer<typeof proposalEditSchema>;
+export const proposalEditHistorySchema = z.object({
+  revision: z.number().int().min(1).max(1_000),
+  editedAt: z.iso.datetime(),
+  actor: boundedText(120),
+  before: proposalEditableFieldsSchema,
+  after: proposalEditableFieldsSchema,
+});
+
 export const routingProposalSchema = z.object({
   id: z.uuid(),
   meetingId: z.uuid(),
@@ -108,6 +127,9 @@ export const routingProposalSchema = z.object({
   reviewedAt: z.iso.datetime().nullable(),
   deliveredAt: z.iso.datetime().nullable(),
   lastError: z.string().max(2_000).nullable(),
+  // Optional for compatibility with persisted v1/v2 proposals and existing goldens.
+  targetNotes: z.array(boundedText(500)).max(100).optional(),
+  editHistory: z.array(proposalEditHistorySchema).max(1_000).optional(),
 });
 export type RoutingProposal = z.infer<typeof routingProposalSchema>;
 

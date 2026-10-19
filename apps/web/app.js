@@ -65,6 +65,53 @@ function renderProposal(proposal) {
   details.append(element("summary", "", "Inspect proposed payload"), element("pre", "", JSON.stringify(proposal.payload, null, 2)));
   card.append(details);
 
+  if (proposal.editHistory?.length) {
+    const history = element("details");
+    history.append(element("summary", "", `Edit history (${proposal.editHistory.length})`), element("pre", "", JSON.stringify(proposal.editHistory, null, 2)));
+    card.append(history);
+  }
+
+  if (proposal.status === "pending") {
+    const editor = element("details");
+    editor.append(element("summary", "", "Edit before approval"));
+    const form = element("form", "proposal-editor");
+    const fields = {};
+    for (const [name, label, value] of [
+      ["title", "Title", proposal.payload.title],
+      ["summary", "Summary", proposal.payload.summary],
+      ["actionItems", "Action items (JSON array)", JSON.stringify(proposal.payload.actionItems, null, 2)],
+      ["targetNotes", "Target note references, one per line", (proposal.targetNotes ?? []).join("\n")],
+    ]) {
+      const wrapper = element("label", "", label);
+      const input = element(name === "title" ? "input" : "textarea");
+      input.value = value;
+      input.name = name;
+      if (name === "title") { input.required = true; input.maxLength = 500; }
+      fields[name] = input;
+      wrapper.append(input);
+      form.append(wrapper);
+    }
+    const notice = element("p", "", "References are review context, not filesystem destinations. Saving does not approve or deliver.");
+    notice.setAttribute("role", "status");
+    const save = element("button", "button secondary", "Save edits");
+    save.type = "submit";
+    form.append(notice, save);
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      save.disabled = true;
+      try {
+        await api(`/v1/proposals/${proposal.id}`, { method: "PATCH", body: JSON.stringify({
+          expectedRevision: proposal.editHistory?.length ?? 0,
+          changes: { title: fields.title.value, summary: fields.summary.value, actionItems: JSON.parse(fields.actionItems.value), targetNotes: fields.targetNotes.value.split("\n").map((value) => value.trim()).filter(Boolean) },
+        }) });
+        await refresh();
+      } catch (error) { notice.textContent = error.message; }
+      finally { save.disabled = false; }
+    });
+    editor.append(form);
+    card.append(editor);
+  }
+
   const actions = element("div", "proposal-actions");
   if (proposal.status === "pending") {
     actions.append(

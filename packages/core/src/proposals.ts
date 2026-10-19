@@ -1,6 +1,25 @@
 import { randomUUID } from "node:crypto";
-import type { CanonicalMeeting, RoutingProposal } from "./schemas.js";
+import { proposalEditableFieldsSchema, proposalEditSchema, proposalEditHistorySchema, type CanonicalMeeting, type ProposalEdit, type RoutingProposal } from "./schemas.js";
 import { sha256, stableJson } from "./hash.js";
+
+/** Only called inside the store's serialised mutation, after status/revision checks. */
+export function applyProposalEdit(proposal: RoutingProposal, input: ProposalEdit, actor: string, now = new Date().toISOString()): RoutingProposal {
+  const edit = proposalEditSchema.parse(input);
+  const before = proposalEditableFieldsSchema.parse({
+    title: proposal.payload.title,
+    summary: proposal.payload.summary,
+    actionItems: proposal.payload.actionItems,
+    targetNotes: proposal.targetNotes ?? [],
+  });
+  const after = proposalEditableFieldsSchema.parse({ ...before, ...edit.changes });
+  const history = proposalEditHistorySchema.parse({ revision: edit.expectedRevision + 1, editedAt: now, actor, before, after });
+  return {
+    ...proposal,
+    payload: { ...proposal.payload, title: after.title, summary: after.summary, actionItems: after.actionItems },
+    targetNotes: after.targetNotes,
+    editHistory: [...(proposal.editHistory ?? []), history],
+  };
+}
 
 function evidenceFor(meeting: CanonicalMeeting): string[] {
   const evidence = [`${meeting.provenance.source}:${meeting.provenance.sourceMeetingId}`];
