@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { JsonRouterStore } from "./store.js";
-import type { RoutingProposal } from "@meeting-context-router/core";
+import { InMemoryCrmLookup, type RoutingProposal } from "@meeting-context-router/core";
 
 const apps: Awaited<ReturnType<typeof buildApp>>[] = [];
 afterEach(async () => { await Promise.all(apps.splice(0).map((app) => app.close())); });
@@ -29,6 +29,29 @@ const changes = {
 };
 
 describe("pending proposal editing", () => {
+  it("keeps participant match previews through editing and persistence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "router-match-"));
+    const statePath = join(root, "state.json");
+    const store = new JsonRouterStore(statePath, {}, new InMemoryCrmLookup(
+      [{ id: "person-fixture", name: "Avery Reed", email: "avery@acme.example" }], [],
+    ));
+    const app = await buildApp(loadConfig({ NODE_ENV: "test", MEETING_ROUTER_STATE_PATH: statePath,
+      OBSIDIAN_OUTPUT_ROOT: join(root, "notes") }), store);
+    apps.push(app);
+    await app.inject({ method: "POST", url: "/v1/intake/manual", payload: {
+      ...source, sourceMeetingId: "synthetic-match-test",
+      participants: [{ name: "Avery Reed", email: "avery@acme.example", external: true }],
+    } });
+    const original = ((await app.inject({ method: "GET", url: "/v1/proposals" })).json().data as RoutingProposal[])
+      .find((proposal) => proposal.target === "crm")!;
+    expect(original.participantMatches?.[0]).toMatchObject({ status: "matched", reason: "exact-email", personId: "person-fixture" });
+    const edited = (await app.inject({ method: "PATCH", url: `/v1/proposals/${original.id}`,
+      payload: { expectedRevision: 0, changes: { summary: "Reviewed summary" } } })).json().data as RoutingProposal;
+    expect(edited.participantMatches).toEqual(original.participantMatches);
+    const reloaded = new JsonRouterStore(statePath);
+    await reloaded.init();
+    expect(reloaded.getProposal(original.id).participantMatches).toEqual(original.participantMatches);
+  });
   it("persists attributed before/after history and preserves identity, source and replay deduplication", async () => {
     const { app, statePath, proposals } = await setup();
     for (const original of proposals) {

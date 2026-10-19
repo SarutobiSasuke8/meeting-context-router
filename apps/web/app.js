@@ -65,6 +65,19 @@ function renderProposal(proposal) {
   details.append(element("summary", "", "Inspect proposed payload"), element("pre", "", JSON.stringify(proposal.payload, null, 2)));
   card.append(details);
 
+  if (proposal.target === "crm" && proposal.participantMatches) {
+    const matches = element("details");
+    matches.append(element("summary", "", `Participant matching preview (${proposal.participantMatches.length})`));
+    const list = element("ul");
+    for (const match of proposal.participantMatches) {
+      const identity = match.participantEmail || match.participantName;
+      const target = match.personId ? `person ${match.personId}` : match.companyId ? `company ${match.companyId}` : "no selected CRM record";
+      list.append(element("li", "", `${identity}: ${match.status}, ${match.confidence} confidence, ${match.reason}; ${target}`));
+    }
+    matches.append(list);
+    card.append(matches);
+  }
+
   if (proposal.editHistory?.length) {
     const history = element("details");
     history.append(element("summary", "", `Edit history (${proposal.editHistory.length})`), element("pre", "", JSON.stringify(proposal.editHistory, null, 2)));

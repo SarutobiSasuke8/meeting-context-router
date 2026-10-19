@@ -34,6 +34,16 @@ n8n or Zapier may later connect through a generic webhook adapter, but neither b
 - Local review workbench served by the API.
 - JSON persistence with atomic file replacement for the single-instance alpha.
 
+### Participant matching preview
+
+CRM proposals show a preview of possible people and company matches before
+approval. The matcher checks exact email, then a non-personal email domain,
+then an exact normalised name. It reports a reason and confidence for every
+participant, including ambiguous and unmatched results. Personal email domains
+never yield company matches. The current `CrmLookup` implementation is an
+in-memory fixture only; it makes no live CRM calls or writes. Matching is
+review context and is preserved when a pending proposal is edited.
+
 ## Workspace
 
 This repository is a pnpm workspace. The root `package.json` sets `"packageManager": "pnpm@11.16.0"` and requires Node.js 22 or newer. `pnpm-workspace.yaml` includes only `apps/*` and `packages/*`. `eval/`, `evals/`, `apps/web`, `docs/` and `workflows/` are not workspace packages.

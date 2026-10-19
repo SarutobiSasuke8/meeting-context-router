@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { proposalEditableFieldsSchema, proposalEditSchema, proposalEditHistorySchema, type CanonicalMeeting, type ProposalEdit, type RoutingProposal } from "./schemas.js";
+import { proposalEditableFieldsSchema, proposalEditSchema, proposalEditHistorySchema, type CanonicalMeeting, type ParticipantMatch, type ProposalEdit, type RoutingProposal } from "./schemas.js";
 import { sha256, stableJson } from "./hash.js";
 
 /** Only called inside the store's serialised mutation, after status/revision checks. */
@@ -28,7 +28,7 @@ function evidenceFor(meeting: CanonicalMeeting): string[] {
   return evidence;
 }
 
-export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date().toISOString()): RoutingProposal[] {
+export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date().toISOString(), participantMatches: ParticipantMatch[] = []): RoutingProposal[] {
   const base = {
     meetingId: meeting.id,
     evidence: evidenceFor(meeting),
@@ -76,6 +76,7 @@ export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date
       target: "crm",
       operation: "create_meeting_activity",
       payload: crmPayload,
+      participantMatches,
       idempotencyKey: sha256(`crm:create_meeting_activity:${stableJson(crmPayload)}`),
     },
     {

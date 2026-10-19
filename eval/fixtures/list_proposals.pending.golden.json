@@ -36,6 +36,28 @@
         "title": "Synthetic contract-suite meeting",
         "transcriptIncluded": false
       },
+      "participantMatches": [
+        {
+          "companyId": null,
+          "confidence": "none",
+          "participantEmail": "host@example.com",
+          "participantIndex": 0,
+          "participantName": "Example Host",
+          "personId": null,
+          "reason": "no-match",
+          "status": "unmatched"
+        },
+        {
+          "companyId": null,
+          "confidence": "none",
+          "participantEmail": "guest@example.com",
+          "participantIndex": 1,
+          "participantName": "Example Guest",
+          "personId": null,
+          "reason": "no-match",
+          "status": "unmatched"
+        }
+      ],
       "reviewedAt": null,
       "status": "pending",
       "target": "crm"
