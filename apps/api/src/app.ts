@@ -7,6 +7,8 @@ import fastifyStatic from "@fastify/static";
 import {
   proposalStatusSchema,
   proposalEditSchema,
+  sourceCapabilities,
+  destinationCapabilities,
   type ProposalStatus,
 } from "@meeting-context-router/core";
 import { CrmConfigurationError, CrmDeliveryAmbiguousError, CrmDeliveryBlockedError, CrmDeliveryRejectedError, deliverCrmProposal, validateCrmDestination } from "@meeting-context-router/destination-crm";
@@ -171,6 +173,9 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     const page = store.listMeetingSummaries(query.limit, query.offset);
     return { data: page.meetings, total: page.total, limit: query.limit, offset: query.offset };
   });
+  app.get("/v1/capabilities", { preHandler: requireScope("meeting:read") }, async () => ({
+    data: { sources: sourceCapabilities, destinations: destinationCapabilities },
+  }));
   app.get("/v1/proposals", { preHandler: requireScope("proposal:read") }, async (request) => {
     const query = z.object({ status: proposalStatusSchema.optional() }).parse(request.query);
     return { data: store.listProposals(query.status as ProposalStatus | undefined) };
