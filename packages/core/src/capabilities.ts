@@ -23,8 +23,13 @@ export const destinationCapabilities: Readonly<Record<DestinationKind, Capabilit
   obsidian: { id: "obsidian", direction: "destination", supports: { transcript: false, summary: true, actionItems: true, participants: true, attachments: false, webhooks: false, replaySafeIds: true } },
 };
 
+export class UnsupportedRouteError extends Error {}
+
 /** Check the fields actually routed, not optional source data intentionally omitted from proposals. */
 export function assertRouteSupported(source: SourceKind, destination: DestinationKind, payload: Record<string, unknown>): void {
+  if (!Object.hasOwn(sourceCapabilities, source) || !Object.hasOwn(destinationCapabilities, destination)) {
+    throw new UnsupportedRouteError("Unknown source or destination capability manifest");
+  }
   const required: Capability[] = ["replaySafeIds"];
   if (typeof payload.summary === "string" && payload.summary.length > 0) required.push("summary");
   if (Array.isArray(payload.actionItems) && payload.actionItems.length > 0) required.push("actionItems");
@@ -35,6 +40,6 @@ export function assertRouteSupported(source: SourceKind, destination: Destinatio
   const unsupported = required.filter((capability) =>
     !sourceCapabilities[source].supports[capability] || !destinationCapabilities[destination].supports[capability]);
   if (unsupported.length) {
-    throw new Error(`Cannot route ${source} to ${destination}: unsupported capabilities: ${unsupported.join(", ")}`);
+    throw new UnsupportedRouteError(`Cannot route ${source} to ${destination}: unsupported capabilities: ${unsupported.join(", ")}`);
   }
 }

@@ -42,7 +42,10 @@ fields are transcript, summary, action items, participants, attachments,
 webhooks and replay-safe IDs. A `true` source field means the adapter can
 normalise that data when supplied; it does not guarantee every meeting has it.
 The router checks the fields it actually puts in each proposal and rejects a
-route if either side lacks a required capability. Transcripts are intentionally
+route if either side lacks a required capability. Checks run at intake, on
+proposal edits and before acquiring a delivery lease. Unsupported input returns
+HTTP 422 with `unsupported_route`, without persisting the rejected change.
+Transcripts are intentionally
 omitted from current CRM and Obsidian proposals, and attachments are not
 supported by the current canonical model.
 

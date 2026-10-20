@@ -13,6 +13,8 @@ export function applyProposalEdit(proposal: RoutingProposal, input: ProposalEdit
     targetNotes: proposal.targetNotes ?? [],
   });
   const after = proposalEditableFieldsSchema.parse({ ...before, ...edit.changes });
+  assertRouteSupported(proposal.payload.source as CanonicalMeeting["provenance"]["source"], proposal.target,
+    { ...proposal.payload, title: after.title, summary: after.summary, actionItems: after.actionItems });
   const history = proposalEditHistorySchema.parse({ revision: edit.expectedRevision + 1, editedAt: now, actor, before, after });
   return {
     ...proposal,
