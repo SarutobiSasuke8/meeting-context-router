@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { proposalEditableFieldsSchema, proposalEditSchema, proposalEditHistorySchema, type CanonicalMeeting, type ProposalEdit, type RoutingProposal } from "./schemas.js";
 import { sha256, stableJson } from "./hash.js";
+import { assertRouteSupported } from "./capabilities.js";
 
 /** Only called inside the store's serialised mutation, after status/revision checks. */
 export function applyProposalEdit(proposal: RoutingProposal, input: ProposalEdit, actor: string, now = new Date().toISOString()): RoutingProposal {
@@ -12,6 +13,8 @@ export function applyProposalEdit(proposal: RoutingProposal, input: ProposalEdit
     targetNotes: proposal.targetNotes ?? [],
   });
   const after = proposalEditableFieldsSchema.parse({ ...before, ...edit.changes });
+  assertRouteSupported(proposal.payload.source as CanonicalMeeting["provenance"]["source"], proposal.target,
+    { ...proposal.payload, title: after.title, summary: after.summary, actionItems: after.actionItems });
   const history = proposalEditHistorySchema.parse({ revision: edit.expectedRevision + 1, editedAt: now, actor, before, after });
   return {
     ...proposal,
@@ -68,6 +71,9 @@ export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date
     decisions: meeting.decisions,
     includeTranscript: false,
   };
+
+  assertRouteSupported(meeting.provenance.source, "crm", crmPayload);
+  assertRouteSupported(meeting.provenance.source, "obsidian", obsidianPayload);
 
   return [
     {

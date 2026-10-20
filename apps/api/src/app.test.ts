@@ -55,6 +55,14 @@ const manualMeeting = {
 };
 
 describe("proposal-first routing API", () => {
+  it("lists adapter capabilities through the existing read scope", async () => {
+    const { app } = await testApp();
+    const response = await app.inject({ method: "GET", url: "/v1/capabilities" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.sources.fathom.supports.webhooks).toBe(true);
+    expect(response.json().data.destinations.obsidian.supports.transcript).toBe(false);
+  });
+
   it("ingests without delivering, deduplicates, then requires approve before delivery", async () => {
     const { app, root } = await testApp();
     const first = await app.inject({ method: "POST", url: "/v1/intake/manual", payload: manualMeeting });

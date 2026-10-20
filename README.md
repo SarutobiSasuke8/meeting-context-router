@@ -34,6 +34,21 @@ n8n or Zapier may later connect through a generic webhook adapter, but neither b
 - Local review workbench served by the API.
 - JSON persistence with atomic file replacement for the single-instance alpha.
 
+### Capability discovery
+
+`GET /v1/capabilities` lists typed source and destination manifests. It uses the
+existing `meeting:read` scope and makes no vendor or destination calls. The
+fields are transcript, summary, action items, participants, attachments,
+webhooks and replay-safe IDs. A `true` source field means the adapter can
+normalise that data when supplied; it does not guarantee every meeting has it.
+The router checks the fields it actually puts in each proposal and rejects a
+route if either side lacks a required capability. Checks run at intake, on
+proposal edits and before acquiring a delivery lease. Unsupported input returns
+HTTP 422 with `unsupported_route`, without persisting the rejected change.
+Transcripts are intentionally
+omitted from current CRM and Obsidian proposals, and attachments are not
+supported by the current canonical model.
+
 ## Workspace
 
 This repository is a pnpm workspace. The root `package.json` sets `"packageManager": "pnpm@11.16.0"` and requires Node.js 22 or newer. `pnpm-workspace.yaml` includes only `apps/*` and `packages/*`. `eval/`, `evals/`, `apps/web`, `docs/` and `workflows/` are not workspace packages.

@@ -7,6 +7,9 @@ import fastifyStatic from "@fastify/static";
 import {
   proposalStatusSchema,
   proposalEditSchema,
+  sourceCapabilities,
+  destinationCapabilities,
+  UnsupportedRouteError,
   type ProposalStatus,
 } from "@meeting-context-router/core";
 import { CrmConfigurationError, CrmDeliveryAmbiguousError, CrmDeliveryBlockedError, CrmDeliveryRejectedError, deliverCrmProposal, validateCrmDestination } from "@meeting-context-router/destination-crm";
@@ -171,6 +174,9 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     const page = store.listMeetingSummaries(query.limit, query.offset);
     return { data: page.meetings, total: page.total, limit: query.limit, offset: query.offset };
   });
+  app.get("/v1/capabilities", { preHandler: requireScope("meeting:read") }, async () => ({
+    data: { sources: sourceCapabilities, destinations: destinationCapabilities },
+  }));
   app.get("/v1/proposals", { preHandler: requireScope("proposal:read") }, async (request) => {
     const query = z.object({ status: proposalStatusSchema.optional() }).parse(request.query);
     return { data: store.listProposals(query.status as ProposalStatus | undefined) };
@@ -383,6 +389,7 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
 
   app.setNotFoundHandler((request, reply) => reply.code(404).send({ error: { code: "not_found", message: "Route not found", requestId: request.id } }));
   app.setErrorHandler((error, request, reply) => {
+    if (error instanceof UnsupportedRouteError) return reply.code(422).send({ error: { code: "unsupported_route", message: error.message, requestId: request.id } });
     if (error instanceof z.ZodError) return reply.code(422).send({ error: { code: "validation_error", message: "Request validation failed", requestId: request.id, issues: error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message })) } });
     if (error instanceof StoreNotFoundError) return reply.code(404).send({ error: { code: "not_found", message: error.message, requestId: request.id } });
     if (error instanceof StoreConflictError) return reply.code(409).send({ error: { code: "conflict", message: error.message, requestId: request.id } });
