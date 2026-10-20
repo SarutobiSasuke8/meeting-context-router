@@ -196,6 +196,20 @@ export class JsonRouterStore {
 
   async ingest(meeting: CanonicalMeeting): Promise<{ meeting: CanonicalMeeting; proposals: RoutingProposal[]; duplicate: boolean }> {
     return this.mutate((state) => {
+      // Gateway events are idempotent on (gateway principal, event id): a replay
+      // returns the original result, and a reused id with other content is a conflict.
+      const gateway = meeting.provenance.gateway;
+      if (gateway) {
+        const replay = state.meetings.find((candidate) =>
+          candidate.provenance.gateway?.principalId === gateway.principalId && candidate.provenance.gateway.eventId === gateway.eventId,
+        );
+        if (replay) {
+          if (replay.provenance.sourceHash !== meeting.provenance.sourceHash || replay.provenance.source !== meeting.provenance.source) {
+            throw new StoreConflictError("Gateway event ID already exists with different content");
+          }
+          return { meeting: replay, proposals: state.proposals.filter((proposal) => proposal.meetingId === replay.id), duplicate: true };
+        }
+      }
       const existing = state.meetings.find((candidate) =>
         candidate.provenance.source === meeting.provenance.source && candidate.provenance.sourceMeetingId === meeting.provenance.sourceMeetingId,
       );

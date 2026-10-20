@@ -21,10 +21,13 @@ import Fastify from "fastify";
 import rawBody from "fastify-raw-body";
 import { z } from "zod";
 import type { Principal, RouterConfig, Scope } from "./config.js";
-import { normalizeAgentIntake, normalizeManualIntake } from "./manual.js";
+import { normalizeAgentIntake, normalizeCanonicalEvent, normalizeManualIntake } from "./manual.js";
 import { JsonRouterStore, StoreConflictError, StoreNotFoundError } from "./store.js";
 
 const idSchema = z.uuid();
+
+/** Body cap for gateway canonical events; larger requests get HTTP 413. */
+export const CANONICAL_EVENT_BODY_LIMIT_BYTES = 1024 * 1024;
 
 function tokenMatches(expected: string, authorization: string | undefined): boolean {
   if (!authorization?.startsWith("Bearer ")) return false;
@@ -196,6 +199,21 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     const result = await store.ingest(applyRetention(normalizeAgentIntake(request.body)));
     auditAction(request, "intake.agent", { meetingId: result.meeting.id, duplicate: result.duplicate });
     return reply.code(result.duplicate ? 200 : 202).send({ data: { meetingId: result.meeting.id, proposalIds: result.proposals.map((proposal) => proposal.id), duplicate: result.duplicate } });
+  });
+
+  // Trusted integration gateways send already-normalised canonical meeting
+  // events. Same scope as agent intake; events only ever become pending proposals.
+  // The scope check runs on onRequest (after the global principal hook) so an
+  // under-scoped caller is refused before its body is read or parsed.
+  app.post("/v1/intake/canonical", {
+    onRequest: requireScope("meeting:ingest"),
+    bodyLimit: CANONICAL_EVENT_BODY_LIMIT_BYTES,
+    config: { rateLimit: { max: 60, timeWindow: "1 minute" } },
+  }, async (request, reply) => {
+    const result = await store.ingest(applyRetention(normalizeCanonicalEvent(request.body, request.principal!.id)));
+    const eventId = result.meeting.provenance.gateway?.eventId;
+    auditAction(request, "intake.canonical", { meetingId: result.meeting.id, eventId, duplicate: result.duplicate });
+    return reply.code(result.duplicate ? 200 : 202).send({ data: { eventId, meetingId: result.meeting.id, proposalIds: result.proposals.map((proposal) => proposal.id), duplicate: result.duplicate } });
   });
 
   app.post("/v1/intake/fathom", {
@@ -394,6 +412,14 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     if (error instanceof StoreNotFoundError) return reply.code(404).send({ error: { code: "not_found", message: error.message, requestId: request.id } });
     if (error instanceof StoreConflictError) return reply.code(409).send({ error: { code: "conflict", message: error.message, requestId: request.id } });
     if (error instanceof ObsidianArtifactConflictError) return reply.code(409).send({ error: { code: "artifact_conflict", message: error.message, requestId: request.id } });
+    // Fastify's own body errors (oversize, malformed JSON, wrong content type)
+    // are client errors, not server failures.
+    const fastifyError = error as { code?: unknown; statusCode?: unknown };
+    if (fastifyError.code === "FST_ERR_CTP_BODY_TOO_LARGE") return reply.code(413).send({ error: { code: "payload_too_large", message: "Request body is too large", requestId: request.id } });
+    const bodyError = error instanceof SyntaxError || (typeof fastifyError.code === "string" && fastifyError.code.startsWith("FST_ERR_CTP_"));
+    if (bodyError && typeof fastifyError.statusCode === "number" && fastifyError.statusCode >= 400 && fastifyError.statusCode < 500) {
+      return reply.code(fastifyError.statusCode).send({ error: { code: "invalid_body", message: "Request body could not be parsed", requestId: request.id } });
+    }
     request.log.error({ err: error }, "Meeting Context Router request failed");
     return reply.code(500).send({ error: { code: "internal_error", message: "Unexpected server error", requestId: request.id } });
   });
