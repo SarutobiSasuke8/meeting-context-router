@@ -28,7 +28,7 @@ function evidenceFor(meeting: CanonicalMeeting): string[] {
   return evidence;
 }
 
-export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date().toISOString(), participantMatches: ParticipantMatch[] = []): RoutingProposal[] {
+export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date().toISOString(), participantMatches?: ParticipantMatch[]): RoutingProposal[] {
   const base = {
     meetingId: meeting.id,
     evidence: evidenceFor(meeting),
@@ -76,7 +76,7 @@ export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date
       target: "crm",
       operation: "create_meeting_activity",
       payload: crmPayload,
-      participantMatches,
+      ...(participantMatches ? { participantMatches } : {}),
       idempotencyKey: sha256(`crm:create_meeting_activity:${stableJson(crmPayload)}`),
     },
     {
