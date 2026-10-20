@@ -16,6 +16,7 @@
     "@meeting-context-router/core": "workspace:*",
     "@meeting-context-router/destination-crm": "workspace:*",
     "@meeting-context-router/destination-obsidian": "workspace:*",
+    "@meeting-context-router/destination-webhook": "workspace:*",
     "@meeting-context-router/source-fathom": "workspace:*",
     "@meeting-context-router/source-fireflies": "workspace:*",
     "@meeting-context-router/source-granola": "workspace:*",

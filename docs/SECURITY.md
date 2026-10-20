@@ -8,6 +8,7 @@ Meeting data can contain confidential commercial and personal information. The a
 - CORS is disabled; the workbench is same-origin.
 - Fathom signatures are checked against the raw body with constant-time comparison and a five-minute default replay window.
 - Fireflies Webhooks V2 signatures are checked against the raw body with constant-time comparison; event timestamps have a five-minute default replay window.
+- The optional outbound webhook signs `<timestamp>.<raw body>` with HMAC-SHA256 under `OUTBOUND_WEBHOOK_SECRET`, takes its URL only from administrator configuration (https unless loopback, no embedded credentials), never follows redirects, never sends the transcript, and refuses to start when its retry budget could outlive the delivery lease.
 - Fathom, Fireflies, and Granola API clients use fixed vendor origins, reject redirects, cap request time, and never accept a destination URL from meeting content.
 - Request bodies are capped at 2 MiB and schemas cap collections and string lengths.
 - Intake creates proposals only. Approval and delivery are separate actions.

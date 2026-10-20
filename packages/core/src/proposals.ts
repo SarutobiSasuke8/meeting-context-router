@@ -31,7 +31,12 @@ function evidenceFor(meeting: CanonicalMeeting): string[] {
   return evidence;
 }
 
-export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date().toISOString()): RoutingProposal[] {
+export interface RoutingOptions {
+  /** Also propose delivery to the administrator-configured outbound webhook. */
+  outboundWebhook?: boolean;
+}
+
+export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date().toISOString(), options: RoutingOptions = {}): RoutingProposal[] {
   const base = {
     meetingId: meeting.id,
     evidence: evidenceFor(meeting),
@@ -75,7 +80,7 @@ export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date
   assertRouteSupported(meeting.provenance.source, "crm", crmPayload);
   assertRouteSupported(meeting.provenance.source, "obsidian", obsidianPayload);
 
-  return [
+  const proposals: RoutingProposal[] = [
     {
       ...base,
       id: randomUUID(),
@@ -93,4 +98,33 @@ export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date
       idempotencyKey: sha256(`obsidian:write_meeting_note:${stableJson(obsidianPayload)}`),
     },
   ];
+
+  if (options.outboundWebhook) {
+    // Same reviewed fields as the other routes, no transcript. The consumer
+    // URL is administrator configuration and is never part of the payload.
+    const webhookPayload = {
+      meetingId: meeting.id,
+      source: meeting.provenance.source,
+      sourceMeetingId: meeting.provenance.sourceMeetingId,
+      title: meeting.title,
+      startedAt: meeting.startedAt,
+      endedAt: meeting.endedAt,
+      sourceUrl: meeting.provenance.sourceUrl,
+      participants: meeting.participants,
+      summary: meeting.summary,
+      actionItems: meeting.actionItems,
+      decisions: meeting.decisions,
+      transcriptIncluded: false,
+    };
+    assertRouteSupported(meeting.provenance.source, "webhook", webhookPayload);
+    proposals.push({
+      ...base,
+      id: randomUUID(),
+      target: "webhook",
+      operation: "deliver_approved_meeting",
+      payload: webhookPayload,
+      idempotencyKey: sha256(`webhook:deliver_approved_meeting:${stableJson(webhookPayload)}`),
+    });
+  }
+  return proposals;
 }
