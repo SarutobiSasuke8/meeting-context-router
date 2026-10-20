@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import {
   createRoutingProposals,
   applyProposalEdit,
+  assertRouteSupported,
   proposalEditSchema,
   emptyRouterState,
   migrateRouterState,
@@ -255,6 +256,7 @@ export class JsonRouterStore {
     return this.mutate((state) => {
       const proposal = state.proposals.find((candidate) => candidate.id === id);
       if (!proposal) throw new StoreNotFoundError("Proposal not found");
+      assertRouteSupported(proposal.payload.source as CanonicalMeeting["provenance"]["source"], proposal.target, proposal.payload);
       if (proposal.status === "delivering") {
         const open = state.deliveryAttempts.find((attempt) => attempt.proposalId === id && attempt.outcome === null);
         const leaseExpired = !open || Date.parse(open.leaseExpiresAt) <= now.getTime();
