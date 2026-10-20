@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "pnpm --filter @meeting-context-router/api dev",
     "dogfood:fathom": "pnpm build && node apps/api/dist/dogfood.js",
+    "alpha-exit:fathom": "pnpm build && node apps/api/dist/alpha-exit.js",
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm build && pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
