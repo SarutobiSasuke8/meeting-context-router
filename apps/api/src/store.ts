@@ -11,6 +11,8 @@ import {
   routerStateSchema,
   sha256,
   stableJson,
+  matchParticipants,
+  type CrmLookup,
   type CanonicalMeeting,
   type DeliveryAttempt,
   type DeliveryOutcome,
@@ -95,6 +97,7 @@ export class JsonRouterStore {
   constructor(
     private readonly path: string,
     encryption: Partial<StoreEncryptionOptions> = {},
+    private readonly crmLookup?: CrmLookup,
   ) {
     this.encryption = { key: encryption.key ?? null, previousKey: encryption.previousKey ?? null };
   }
@@ -195,6 +198,9 @@ export class JsonRouterStore {
   }
 
   async ingest(meeting: CanonicalMeeting): Promise<{ meeting: CanonicalMeeting; proposals: RoutingProposal[]; duplicate: boolean }> {
+    // Lookup is optional and runs outside the serialised state mutation. Absence
+    // means unavailable, not evidence that participants are absent from a CRM.
+    const participantMatches = this.crmLookup ? await matchParticipants(meeting.participants, this.crmLookup) : undefined;
     return this.mutate((state) => {
       const existing = state.meetings.find((candidate) =>
         candidate.provenance.source === meeting.provenance.source && candidate.provenance.sourceMeetingId === meeting.provenance.sourceMeetingId,
@@ -205,7 +211,7 @@ export class JsonRouterStore {
         }
         return { meeting: existing, proposals: state.proposals.filter((proposal) => proposal.meetingId === existing.id), duplicate: true };
       }
-      const proposals = createRoutingProposals(meeting);
+      const proposals = createRoutingProposals(meeting, new Date().toISOString(), participantMatches);
       state.meetings.push(meeting);
       state.proposals.push(...proposals);
       return { meeting, proposals, duplicate: false };

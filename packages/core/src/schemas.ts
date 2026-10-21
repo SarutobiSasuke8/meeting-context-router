@@ -113,6 +113,19 @@ export const proposalEditHistorySchema = z.object({
   after: proposalEditableFieldsSchema,
 });
 
+export const participantMatchSchema = z.object({
+  participantIndex: z.number().int().min(0),
+  participantName: boundedText(200),
+  participantEmail: z.email().max(320).nullable(),
+  status: z.enum(["matched", "ambiguous", "unmatched"]),
+  confidence: z.enum(["high", "medium", "low", "none"]),
+  reason: z.enum(["exact-email", "company-domain", "person-name", "company-name",
+    "ambiguous-email", "ambiguous-domain", "ambiguous-name", "no-match"]),
+  personId: z.string().max(200).nullable(),
+  companyId: z.string().max(200).nullable(),
+});
+export type ParticipantMatch = z.infer<typeof participantMatchSchema>;
+
 export const routingProposalSchema = z.object({
   id: z.uuid(),
   meetingId: z.uuid(),
@@ -130,6 +143,7 @@ export const routingProposalSchema = z.object({
   // Optional for compatibility with persisted v1/v2 proposals and existing goldens.
   targetNotes: z.array(boundedText(500)).max(100).optional(),
   editHistory: z.array(proposalEditHistorySchema).max(1_000).optional(),
+  participantMatches: z.array(participantMatchSchema).max(250).optional(),
 });
 export type RoutingProposal = z.infer<typeof routingProposalSchema>;
 

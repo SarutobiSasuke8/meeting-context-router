@@ -34,6 +34,20 @@ n8n or Zapier may later connect through a generic webhook adapter, but neither b
 - Local review workbench served by the API.
 - JSON persistence with atomic file replacement for the single-instance alpha.
 
+### Participant matching preview
+
+CRM proposals show a preview of possible people and company matches before
+approval. The matcher checks exact email, then a non-personal email domain,
+then an exact normalised name only when the participant has no email. It reports a reason and confidence for every
+participant, including ambiguous and unmatched results. Personal email domains
+never yield company matches. The current `CrmLookup` implementation is an
+in-memory fixture only; it makes no live CRM calls or writes. No lookup is
+configured by default: the workbench says matching is unavailable and omits
+match results, rather than labelling everyone unmatched. Injected fixture
+previews are labelled fixture-only. `CrmLookup` is asynchronous and runs before
+the serialised state mutation, so a slow lookup does not block other reviews.
+Matching is review context and is preserved when a pending proposal is edited.
+
 ### Capability discovery
 
 `GET /v1/capabilities` lists typed source and destination manifests. It uses the
