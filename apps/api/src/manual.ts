@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { agentMeetingIntakeSchema, canonicalMeetingSchema, sha256, stableJson, type AgentMeetingIntake, type CanonicalMeeting } from "@meeting-context-router/core";
+import { agentMeetingIntakeSchema, canonicalMeetingEventSchema, canonicalMeetingSchema, sha256, stableJson, type AgentMeetingIntake, type CanonicalMeeting, type CanonicalMeetingEvent } from "@meeting-context-router/core";
 import { z } from "zod";
 
 export const manualIntakeSchema = z.object({
@@ -59,6 +59,32 @@ export function normalizeManualIntake(input: unknown, receivedAt = new Date().to
       receivedAt,
       sourceHash: sha256(stableJson({ ...parsed, sourceMeetingId })),
       signatureVerified: false,
+    },
+    createdAt: receivedAt,
+  });
+}
+
+/**
+ * Accepts an already-normalised canonical meeting event from a trusted
+ * gateway. The router still assigns the meeting id, timestamps and source hash;
+ * the hash covers the meeting content only, so the store can tell a replay of
+ * the same event id (same hash) from a reused id with different content.
+ */
+export function normalizeCanonicalEvent(input: unknown, principalId: string, receivedAt = new Date().toISOString()): CanonicalMeeting {
+  const event: CanonicalMeetingEvent = canonicalMeetingEventSchema.parse(input);
+  const { provenance, ...content } = event.meeting;
+  return canonicalMeetingSchema.parse({
+    id: randomUUID(),
+    ...content,
+    provenance: {
+      source: provenance.source,
+      transport: "gateway",
+      sourceMeetingId: provenance.sourceMeetingId,
+      sourceUrl: provenance.sourceUrl,
+      receivedAt,
+      sourceHash: sha256(stableJson(event.meeting)),
+      signatureVerified: false,
+      gateway: { principalId, eventId: event.eventId },
     },
     createdAt: receivedAt,
   });

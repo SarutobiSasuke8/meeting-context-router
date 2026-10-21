@@ -63,6 +63,51 @@ Transcripts are intentionally
 omitted from current CRM and Obsidian proposals, and attachments are not
 supported by the current canonical model.
 
+### Gateway canonical-event intake
+
+`POST /v1/intake/canonical` accepts meeting events that a trusted integration
+gateway has already normalised to the router's canonical meeting shape, so a new
+source does not need its own adapter. It uses the existing scoped-principal
+model: the caller is a `MEETING_ROUTER_PRINCIPALS` entry with the
+`meeting:ingest` scope (or `admin`). There is no separate credential type.
+
+```json
+{
+  "eventId": "gw-2026-10-20-0001",
+  "meeting": {
+    "title": "Partner sync",
+    "startedAt": "2026-10-20T09:00:00.000Z",
+    "endedAt": null,
+    "participants": [{ "name": "Sam", "email": "sam@example.com", "external": true }],
+    "summary": "Agreed next steps.",
+    "actionItems": [],
+    "decisions": [],
+    "transcript": [],
+    "provenance": { "source": "generic", "sourceMeetingId": "partner-123", "sourceUrl": null }
+  }
+}
+```
+
+- Validation reuses the canonical meeting field schemas with every object
+  strict. Unknown fields, and router-owned fields such as the meeting `id`,
+  `sourceHash` or `signatureVerified`, return 422 `validation_error`.
+  `provenance.source` is `fathom`, `fireflies`, `granola` or `generic`.
+- The body cap is 1 MiB; larger requests return 413 `payload_too_large`.
+  Malformed JSON returns 400 `invalid_body`. Missing or unknown tokens return
+  401, and a principal without `meeting:ingest` returns 403 before its body is read.
+- Idempotency is keyed on the gateway principal and `eventId`. A replay with the
+  same content returns 200 with the original `meetingId` and `proposalIds` and
+  `duplicate: true`; the same `eventId` with different content returns 409
+  `conflict`. A new `eventId` for a meeting already seen falls back to the
+  existing source meeting ID check (same content is a duplicate, different is 409).
+- Source capability manifests apply as for every intake: a route the source
+  does not declare (for example action items from `granola`) returns 422
+  `unsupported_route`.
+- The meeting is stored with `transport: "gateway"`, `signatureVerified: false`
+  and the gateway principal and event ID in its provenance. Events only become
+  pending proposals; nothing is written to Obsidian or the CRM until a reviewer
+  approves and delivers.
+
 ## Workspace
 
 This repository is a pnpm workspace. The root `package.json` sets `"packageManager": "pnpm@11.16.0"` and requires Node.js 22 or newer. `pnpm-workspace.yaml` includes only `apps/*` and `packages/*`. `eval/`, `evals/`, `apps/web`, `docs/` and `workflows/` are not workspace packages.
