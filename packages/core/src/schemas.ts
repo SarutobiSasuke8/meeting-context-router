@@ -5,7 +5,7 @@ const optionalUrl = z.url().max(2_000).nullable();
 
 export const sourceKindSchema = z.enum(["manual", "fathom", "fireflies", "granola", "generic"]);
 export type SourceKind = z.infer<typeof sourceKindSchema>;
-export const transportKindSchema = z.enum(["manual", "webhook", "api", "mcp"]);
+export const transportKindSchema = z.enum(["manual", "webhook", "api", "mcp", "gateway"]);
 export type TransportKind = z.infer<typeof transportKindSchema>;
 
 export const participantSchema = z.object({
@@ -41,6 +41,12 @@ export const provenanceSchema = z.object({
   receivedAt: z.iso.datetime(),
   sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
   signatureVerified: z.boolean(),
+  // Set only for canonical events from a trusted gateway. Optional so persisted
+  // meetings from other intakes and earlier versions still parse.
+  gateway: z.object({
+    principalId: boundedText(120),
+    eventId: boundedText(200),
+  }).optional(),
 });
 export type Provenance = z.infer<typeof provenanceSchema>;
 
@@ -90,6 +96,32 @@ export const agentMeetingIntakeSchema = z.object({
 });
 export type AgentMeetingIntake = z.infer<typeof agentMeetingIntakeSchema>;
 
+/**
+ * An already-normalised canonical meeting event from a trusted integration
+ * gateway. It reuses the canonical meeting field schemas, but every object is
+ * strict and the router-owned fields (id, createdAt, receivedAt, sourceHash,
+ * signatureVerified, transport) are not accepted from the caller.
+ */
+export const canonicalMeetingEventSchema = z.strictObject({
+  eventId: z.string().trim().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, "eventId may contain letters, digits, '.', '_', ':' and '-' only"),
+  meeting: z.strictObject({
+    title: canonicalMeetingSchema.shape.title,
+    startedAt: canonicalMeetingSchema.shape.startedAt,
+    endedAt: canonicalMeetingSchema.shape.endedAt,
+    participants: z.array(participantSchema.strict()).max(250),
+    summary: canonicalMeetingSchema.shape.summary,
+    actionItems: z.array(actionItemSchema.strict()).max(250),
+    decisions: canonicalMeetingSchema.shape.decisions,
+    transcript: z.array(transcriptSegmentSchema.strict()).max(20_000),
+    provenance: z.strictObject({
+      source: z.enum(["fathom", "fireflies", "granola", "generic"]),
+      sourceMeetingId: boundedText(500),
+      sourceUrl: optionalUrl,
+    }),
+  }),
+});
+export type CanonicalMeetingEvent = z.infer<typeof canonicalMeetingEventSchema>;
+
 export const proposalTargetSchema = z.enum(["crm", "obsidian", "webhook"]);
 export type ProposalTarget = z.infer<typeof proposalTargetSchema>;
 export const proposalStatusSchema = z.enum(["pending", "approved", "delivering", "rejected", "delivered", "blocked", "failed", "unknown"]);
@@ -114,6 +146,19 @@ export const proposalEditHistorySchema = z.object({
   after: proposalEditableFieldsSchema,
 });
 
+export const participantMatchSchema = z.object({
+  participantIndex: z.number().int().min(0),
+  participantName: boundedText(200),
+  participantEmail: z.email().max(320).nullable(),
+  status: z.enum(["matched", "ambiguous", "unmatched"]),
+  confidence: z.enum(["high", "medium", "low", "none"]),
+  reason: z.enum(["exact-email", "company-domain", "person-name", "company-name",
+    "ambiguous-email", "ambiguous-domain", "ambiguous-name", "no-match"]),
+  personId: z.string().max(200).nullable(),
+  companyId: z.string().max(200).nullable(),
+});
+export type ParticipantMatch = z.infer<typeof participantMatchSchema>;
+
 export const routingProposalSchema = z.object({
   id: z.uuid(),
   meetingId: z.uuid(),
@@ -131,6 +176,7 @@ export const routingProposalSchema = z.object({
   // Optional for compatibility with persisted v1/v2 proposals and existing goldens.
   targetNotes: z.array(boundedText(500)).max(100).optional(),
   editHistory: z.array(proposalEditHistorySchema).max(1_000).optional(),
+  participantMatches: z.array(participantMatchSchema).max(250).optional(),
 });
 export type RoutingProposal = z.infer<typeof routingProposalSchema>;
 

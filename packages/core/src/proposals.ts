@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { proposalEditableFieldsSchema, proposalEditSchema, proposalEditHistorySchema, type CanonicalMeeting, type ProposalEdit, type RoutingProposal } from "./schemas.js";
+import { proposalEditableFieldsSchema, proposalEditSchema, proposalEditHistorySchema, type CanonicalMeeting, type ParticipantMatch, type ProposalEdit, type RoutingProposal } from "./schemas.js";
 import { sha256, stableJson } from "./hash.js";
 import { assertRouteSupported } from "./capabilities.js";
 
@@ -36,7 +36,7 @@ export interface RoutingOptions {
   outboundWebhook?: boolean;
 }
 
-export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date().toISOString(), options: RoutingOptions = {}): RoutingProposal[] {
+export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date().toISOString(), participantMatches?: ParticipantMatch[], options: RoutingOptions = {}): RoutingProposal[] {
   const base = {
     meetingId: meeting.id,
     evidence: evidenceFor(meeting),
@@ -87,6 +87,7 @@ export function createRoutingProposals(meeting: CanonicalMeeting, now = new Date
       target: "crm",
       operation: "create_meeting_activity",
       payload: crmPayload,
+      ...(participantMatches ? { participantMatches } : {}),
       idempotencyKey: sha256(`crm:create_meeting_activity:${stableJson(crmPayload)}`),
     },
     {

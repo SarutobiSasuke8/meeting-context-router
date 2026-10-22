@@ -11,6 +11,8 @@ import {
   routerStateSchema,
   sha256,
   stableJson,
+  matchParticipants,
+  type CrmLookup,
   type CanonicalMeeting,
   type DeliveryAttempt,
   type DeliveryOutcome,
@@ -96,6 +98,7 @@ export class JsonRouterStore {
   constructor(
     private readonly path: string,
     encryption: Partial<StoreEncryptionOptions> = {},
+    private readonly crmLookup?: CrmLookup,
     private readonly routing: RoutingOptions = {},
   ) {
     this.encryption = { key: encryption.key ?? null, previousKey: encryption.previousKey ?? null };
@@ -197,7 +200,24 @@ export class JsonRouterStore {
   }
 
   async ingest(meeting: CanonicalMeeting): Promise<{ meeting: CanonicalMeeting; proposals: RoutingProposal[]; duplicate: boolean }> {
+    // Lookup is optional and runs outside the serialised state mutation. Absence
+    // means unavailable, not evidence that participants are absent from a CRM.
+    const participantMatches = this.crmLookup ? await matchParticipants(meeting.participants, this.crmLookup) : undefined;
     return this.mutate((state) => {
+      // Gateway events are idempotent on (gateway principal, event id): a replay
+      // returns the original result, and a reused id with other content is a conflict.
+      const gateway = meeting.provenance.gateway;
+      if (gateway) {
+        const replay = state.meetings.find((candidate) =>
+          candidate.provenance.gateway?.principalId === gateway.principalId && candidate.provenance.gateway.eventId === gateway.eventId,
+        );
+        if (replay) {
+          if (replay.provenance.sourceHash !== meeting.provenance.sourceHash || replay.provenance.source !== meeting.provenance.source) {
+            throw new StoreConflictError("Gateway event ID already exists with different content");
+          }
+          return { meeting: replay, proposals: state.proposals.filter((proposal) => proposal.meetingId === replay.id), duplicate: true };
+        }
+      }
       const existing = state.meetings.find((candidate) =>
         candidate.provenance.source === meeting.provenance.source && candidate.provenance.sourceMeetingId === meeting.provenance.sourceMeetingId,
       );
@@ -207,7 +227,7 @@ export class JsonRouterStore {
         }
         return { meeting: existing, proposals: state.proposals.filter((proposal) => proposal.meetingId === existing.id), duplicate: true };
       }
-      const proposals = createRoutingProposals(meeting, undefined, this.routing);
+      const proposals = createRoutingProposals(meeting, new Date().toISOString(), participantMatches, this.routing);
       state.meetings.push(meeting);
       state.proposals.push(...proposals);
       return { meeting, proposals, duplicate: false };
