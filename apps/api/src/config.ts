@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_CRM_MEETING_ACTIVITY_PATH } from "@meeting-context-router/destination-crm";
+import { DEFAULT_OUTBOUND_WEBHOOK_RETRY, MIN_OUTBOUND_WEBHOOK_SECRET_LENGTH } from "@meeting-context-router/destination-webhook";
 import { z } from "zod";
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
@@ -60,6 +61,13 @@ const environmentSchema = z.object({
   CRM_BASE_URL: z.url().default("http://127.0.0.1:4100"),
   CRM_API_TOKEN: z.string().min(16).optional(),
   CRM_MEETING_ACTIVITY_PATH: z.string().trim().default(DEFAULT_CRM_MEETING_ACTIVITY_PATH),
+  OUTBOUND_WEBHOOK_URL: z.string().trim().optional(),
+  // An empty value (as copied from .env.example) means unset.
+  OUTBOUND_WEBHOOK_SECRET: z.preprocess((value) => (value === "" ? undefined : value), z.string().min(MIN_OUTBOUND_WEBHOOK_SECRET_LENGTH).max(512).optional()),
+  OUTBOUND_WEBHOOK_TIMEOUT_MS: z.coerce.number().int().min(100).max(30_000).default(DEFAULT_OUTBOUND_WEBHOOK_RETRY.timeoutMs),
+  OUTBOUND_WEBHOOK_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(5).default(DEFAULT_OUTBOUND_WEBHOOK_RETRY.maxAttempts),
+  OUTBOUND_WEBHOOK_BACKOFF_MS: z.coerce.number().int().min(0).max(30_000).default(DEFAULT_OUTBOUND_WEBHOOK_RETRY.backoffBaseMs),
+  OUTBOUND_WEBHOOK_BACKOFF_MAX_MS: z.coerce.number().int().min(0).max(60_000).default(DEFAULT_OUTBOUND_WEBHOOK_RETRY.backoffMaxMs),
 });
 
 export type RouterConfig = ReturnType<typeof loadConfig>;
@@ -118,6 +126,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
   const stateKey = decodeKey("MEETING_ROUTER_STATE_KEY", parsed.MEETING_ROUTER_STATE_KEY);
   const statePreviousKey = decodeKey("MEETING_ROUTER_STATE_KEY_PREVIOUS", parsed.MEETING_ROUTER_STATE_KEY_PREVIOUS);
   if (statePreviousKey && !stateKey) throw new Error("MEETING_ROUTER_STATE_KEY_PREVIOUS requires MEETING_ROUTER_STATE_KEY");
+  const webhookUrl = parsed.OUTBOUND_WEBHOOK_URL || null;
+  if (webhookUrl && !parsed.OUTBOUND_WEBHOOK_SECRET) throw new Error("OUTBOUND_WEBHOOK_URL requires OUTBOUND_WEBHOOK_SECRET; the router never sends an unsigned webhook");
+  if (!webhookUrl && parsed.OUTBOUND_WEBHOOK_SECRET) throw new Error("OUTBOUND_WEBHOOK_SECRET is set without OUTBOUND_WEBHOOK_URL");
 
   return {
     environment: parsed.NODE_ENV,
@@ -143,5 +154,14 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env) {
       activityPath: parsed.CRM_MEETING_ACTIVITY_PATH,
       apiToken: parsed.CRM_API_TOKEN ?? "",
     },
+    // Null when not configured: no webhook proposals are created and nothing is sent.
+    outboundWebhook: webhookUrl && parsed.OUTBOUND_WEBHOOK_SECRET ? {
+      url: webhookUrl,
+      secret: parsed.OUTBOUND_WEBHOOK_SECRET,
+      timeoutMs: parsed.OUTBOUND_WEBHOOK_TIMEOUT_MS,
+      maxAttempts: parsed.OUTBOUND_WEBHOOK_MAX_ATTEMPTS,
+      backoffBaseMs: parsed.OUTBOUND_WEBHOOK_BACKOFF_MS,
+      backoffMaxMs: parsed.OUTBOUND_WEBHOOK_BACKOFF_MAX_MS,
+    } : null,
   };
 }

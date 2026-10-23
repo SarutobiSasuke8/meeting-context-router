@@ -122,7 +122,8 @@ export const canonicalMeetingEventSchema = z.strictObject({
 });
 export type CanonicalMeetingEvent = z.infer<typeof canonicalMeetingEventSchema>;
 
-export const proposalTargetSchema = z.enum(["crm", "obsidian"]);
+export const proposalTargetSchema = z.enum(["crm", "obsidian", "webhook"]);
+export type ProposalTarget = z.infer<typeof proposalTargetSchema>;
 export const proposalStatusSchema = z.enum(["pending", "approved", "delivering", "rejected", "delivered", "blocked", "failed", "unknown"]);
 export type ProposalStatus = z.infer<typeof proposalStatusSchema>;
 

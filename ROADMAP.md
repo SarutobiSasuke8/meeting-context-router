@@ -26,7 +26,7 @@
 
 ## Later — optional edges
 
-- [ ] Generic outbound webhook adapter for n8n, Zapier, or custom consumers.
+- [x] Generic outbound webhook adapter for n8n, Zapier, or custom consumers.
 - [x] Generic inbound canonical-event endpoint for trusted integration gateways.
 - [x] MCP status and proposal inspection tools for agents.
 - [ ] Multi-workspace tenancy and OAuth installation flows.

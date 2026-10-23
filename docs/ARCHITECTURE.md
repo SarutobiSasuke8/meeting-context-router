@@ -47,4 +47,4 @@ The alpha uses one atomic JSON state file and is intended for a single process. 
 
 ## n8n boundary
 
-n8n is neither an orchestrator nor a required runtime. A future generic webhook adapter may publish approved canonical events to n8n. That adapter will have the same proposal, allowlist, idempotency and audit rules as every other destination.
+n8n is neither an orchestrator nor a required runtime. The optional generic outbound webhook adapter (`packages/destination-webhook`) publishes approved meetings to n8n, Zapier or a custom consumer. It follows the same proposal, administrator-configured destination, idempotency, delivery-lease and audit rules as every other destination, and signs every request with HMAC-SHA256.

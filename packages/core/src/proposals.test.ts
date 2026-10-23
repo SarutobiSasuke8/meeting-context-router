@@ -30,4 +30,17 @@ describe("createRoutingProposals", () => {
     const second = createRoutingProposals(meeting);
     expect(first.map((proposal) => proposal.idempotencyKey)).toEqual(second.map((proposal) => proposal.idempotencyKey));
   });
+
+  it("adds an outbound webhook proposal only when the webhook route is enabled", () => {
+    const proposals = createRoutingProposals(meeting, "2026-08-12T09:31:00.000Z", undefined, { outboundWebhook: true });
+    expect(proposals.map((proposal) => proposal.target)).toEqual(["crm", "obsidian", "webhook"]);
+    const webhook = proposals[2]!;
+    expect(webhook.operation).toBe("deliver_approved_meeting");
+    expect(webhook.status).toBe("pending");
+    expect(webhook.payload).not.toHaveProperty("transcript");
+    expect(webhook.payload).toHaveProperty("transcriptIncluded", false);
+    expect(webhook.payload).not.toHaveProperty("url");
+    expect(new Set(proposals.map((proposal) => proposal.idempotencyKey)).size).toBe(3);
+    expect(createRoutingProposals(meeting, undefined, undefined, { outboundWebhook: true })[2]!.idempotencyKey).toBe(webhook.idempotencyKey);
+  });
 });

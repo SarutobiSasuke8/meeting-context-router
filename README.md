@@ -31,6 +31,7 @@ n8n or Zapier may later connect through a generic webhook adapter, but neither b
 - Working Obsidian Markdown delivery to an allowlisted output root.
 - Direct Agent CRM delivery to `POST /v1/activities/meetings` with fixed configured origin, bearer auth, timeout, idempotency key and recorded receipt.
 - A deliberately honest CRM blocked state while no CRM token is configured or the CRM rejects the payload, credential or route.
+- Optional generic outbound webhook for n8n, Zapier or custom consumers: HMAC-SHA256 signed, keyed by the proposal idempotency key, retried with backoff, approved proposals only.
 - Local review workbench served by the API.
 - JSON persistence with atomic file replacement for the single-instance alpha.
 
@@ -123,6 +124,7 @@ This repository is a pnpm workspace. The root `package.json` sets `"packageManag
 | `packages/source-granola` | `@meeting-context-router/source-granola` | Granola public notes API. |
 | `packages/destination-crm` | `@meeting-context-router/destination-crm` | Direct CRM adapter. |
 | `packages/destination-obsidian` | `@meeting-context-router/destination-obsidian` | Obsidian Markdown delivery. |
+| `packages/destination-webhook` | `@meeting-context-router/destination-webhook` | Generic HMAC-signed outbound webhook (n8n, Zapier, custom consumers). |
 | `eval/` | none | Offline MCP contract suite (`eval/mcp.suite.yaml`, `eval/router-target.mjs`). |
 | `evals/` | none | Written evaluation plan only (`evals/EVAL_PLAN.md`). No runner. |
 
@@ -308,6 +310,7 @@ Official setup references: [Fathom MCP](https://developers.fathom.ai/mcp-docs), 
 |---|---|---|
 | CRM | participant matches, meeting metadata, follow-ups, deal context | full transcript, private narrative |
 | Obsidian | human-readable meeting note, decisions, context, private follow-up | CRM mutation authority |
+| Outbound webhook | a signed copy of the approved meeting fields for an automation consumer | full transcript, the router's credentials |
 
 The Obsidian adapter writes only inside `OBSIDIAN_OUTPUT_ROOT`. The default is the repository's ignored outbox, not a real vault. The CRM adapter accepts no URL from request payloads; its origin and route are administrator configuration.
 
@@ -346,6 +349,86 @@ Without Docker or PostgreSQL, `evals/agent-crm-local.mjs` starts the real Agent 
 ```bash
 AGENT_CRM_REPO=/path/to/agent-crm node evals/agent-crm-local.mjs pnpm --filter @meeting-context-router/api exec vitest run src/crm-e2e.test.ts
 ```
+
+## Outbound webhook
+
+One generic outbound webhook delivers approved meetings to n8n, Zapier or a custom consumer, so no per-platform adapter is needed. It is optional and off by default; neither n8n nor Zapier is a dependency.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `OUTBOUND_WEBHOOK_URL` | unset | Consumer URL. Administrator configuration only, never taken from a meeting payload. Non-loopback URLs must use `https`; embedded credentials and fragments are refused. |
+| `OUTBOUND_WEBHOOK_SECRET` | unset | Shared HMAC secret, at least 32 characters (for example `openssl rand -hex 32`). Required with the URL: the router never sends an unsigned webhook. |
+| `OUTBOUND_WEBHOOK_TIMEOUT_MS` | `10000` | Timeout of one HTTP attempt. |
+| `OUTBOUND_WEBHOOK_MAX_ATTEMPTS` | `3` | HTTP attempts per delivery call, including the first (1 to 5). |
+| `OUTBOUND_WEBHOOK_BACKOFF_MS` | `1000` | Base delay of the exponential backoff. |
+| `OUTBOUND_WEBHOOK_BACKOFF_MAX_MS` | `30000` | Ceiling of one delay, including a honoured `Retry-After`. |
+
+The router refuses to start if the worst case of one delivery call (`timeout x attempts + (attempts - 1) x backoff ceiling`) does not fit inside `MEETING_ROUTER_DELIVERY_LEASE_SECONDS`, so the delivery lease cannot expire while retries are still sending.
+
+How it fits the proposal model:
+
+- When the URL is configured, each newly ingested meeting gets a third proposal, `target: "webhook"`, `operation: "deliver_approved_meeting"`, next to the CRM and Obsidian proposals. It is reviewed, edited, approved or rejected like the others. Meetings ingested before the webhook was configured do not get one.
+- `POST /v1/proposals/:id/deliver` sends it only after approval. A pending or rejected proposal returns `409` and nothing is sent; the adapter also refuses any proposal that is not approved.
+- The destination is declared in `GET /v1/capabilities` as `destinations.webhook` (summary, action items, participants, `webhooks: true`, replay-safe IDs; no transcript, no attachments). The transcript is never sent.
+- Outcomes use the same durable delivery attempts and leases as the CRM: `2xx` is `delivered` (a JSON body `id` or `receiptId` is kept as the receipt); `408`, `429` and `5xx` are retried with backoff and, when the budget runs out, recorded as `failed`; any other status, including a redirect, is `blocked` for an operator; a timeout or network failure with no later success is `unknown` and listed in `GET /v1/deliveries/dead-letter`. A delivered proposal cannot be delivered again.
+
+### Request
+
+```http
+POST <OUTBOUND_WEBHOOK_URL>
+content-type: application/json
+x-mcr-webhook-id: <proposal idempotency key, 64 hex>
+idempotency-key: <same value>
+x-mcr-webhook-timestamp: <unix seconds>
+x-mcr-webhook-signature: v1=<hex HMAC-SHA256(secret, "<timestamp>.<raw body>")>
+x-mcr-webhook-attempt: <1-based attempt number, not signed>
+```
+
+```json
+{
+  "type": "meeting.proposal.approved",
+  "version": 1,
+  "id": "<same as x-mcr-webhook-id>",
+  "proposalId": "<uuid>",
+  "meetingId": "<uuid>",
+  "approvedAt": "<ISO timestamp>",
+  "data": {
+    "meetingId": "<uuid>", "source": "fathom", "sourceMeetingId": "...", "title": "...",
+    "startedAt": "...", "endedAt": "...", "sourceUrl": null,
+    "participants": [{ "name": "...", "email": "...", "external": false }],
+    "summary": "...", "actionItems": [], "decisions": [], "transcriptIncluded": false
+  }
+}
+```
+
+The id is derived from the proposal (its idempotency key, a SHA-256 of the routed payload), so it is identical on every retry and every later redelivery. The body holds no send time and is byte-identical across attempts; only the timestamp and signature change.
+
+### Verifying a delivery
+
+A consumer should:
+
+1. Compute `HMAC-SHA256(secret, timestamp + "." + rawBody)` as lower-case hex over the **raw** request body, before any JSON parsing, and compare it in constant time with each space-separated `v1=` value of `x-mcr-webhook-signature`.
+2. Reject a timestamp more than five minutes from its own clock.
+3. Treat `x-mcr-webhook-id` as an idempotency key: if it was already processed, answer `2xx` without processing again. This is what makes retries and `unknown` reconciliation safe; the router only promises at-least-once delivery.
+4. Answer `2xx` quickly. Answer `4xx` only for events it will never accept, because those block the proposal.
+
+In Node, `verifyOutboundWebhookSignature(secret, { timestamp, signature }, rawBody)` from `@meeting-context-router/destination-webhook` does steps 1 and 2. Without the package:
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+function verify(secret, headers, rawBody, toleranceSeconds = 300) {
+  const timestamp = headers["x-mcr-webhook-timestamp"];
+  const signatures = (headers["x-mcr-webhook-signature"] ?? "").split(" ");
+  if (!/^\d+$/.test(timestamp ?? "") || Math.abs(Date.now() / 1000 - Number(timestamp)) > toleranceSeconds) return false;
+  const expected = Buffer.from(`v1=${createHmac("sha256", secret).update(`${timestamp}.${rawBody}`).digest("hex")}`);
+  return signatures.some((value) => value.length === expected.length && timingSafeEqual(Buffer.from(value), expected));
+}
+```
+
+In n8n, enable the Webhook node's raw body option, then compute the same HMAC with a Crypto node (SHA256, hex, secret from a credential) over `timestamp + "." + body` and compare it with the header in an IF node before the rest of the flow. In Zapier, use the Catch Raw Hook trigger, which keeps the raw body, and a Code by Zapier step with the snippet above.
+
+Tests run against a local fake receiver only (`packages/destination-webhook/src/index.test.ts`, `apps/api/src/outbound-webhook.test.ts`): a `node:http` server on a random loopback port that verifies signatures and dedupes on the id. No third-party endpoint is contacted.
 
 ## Project status
 

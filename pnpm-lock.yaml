@@ -44,6 +44,9 @@ importers:
       '@meeting-context-router/destination-obsidian':
         specifier: workspace:*
         version: link:../../packages/destination-obsidian
+      '@meeting-context-router/destination-webhook':
+        specifier: workspace:*
+        version: link:../../packages/destination-webhook
       '@meeting-context-router/source-fathom':
         specifier: workspace:*
         version: link:../../packages/source-fathom
@@ -99,6 +102,15 @@ importers:
         version: 4.4.3
 
   packages/destination-obsidian:
+    dependencies:
+      '@meeting-context-router/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.1.5
+        version: 4.4.3
+
+  packages/destination-webhook:
     dependencies:
       '@meeting-context-router/core':
         specifier: workspace:*

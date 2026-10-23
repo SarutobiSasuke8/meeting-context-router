@@ -14,6 +14,15 @@ import {
 } from "@meeting-context-router/core";
 import { CrmConfigurationError, CrmDeliveryAmbiguousError, CrmDeliveryBlockedError, CrmDeliveryRejectedError, deliverCrmProposal, validateCrmDestination } from "@meeting-context-router/destination-crm";
 import { deliverObsidianProposal, ObsidianArtifactConflictError, removeObsidianArtifact, renderObsidianMeeting } from "@meeting-context-router/destination-obsidian";
+import {
+  deliverOutboundWebhook,
+  OutboundWebhookAmbiguousError,
+  OutboundWebhookBlockedError,
+  OutboundWebhookConfigurationError,
+  OutboundWebhookRejectedError,
+  outboundWebhookWorstCaseMs,
+  validateOutboundWebhookConfig,
+} from "@meeting-context-router/destination-webhook";
 import { fetchFathomMeetings, normalizeFathomWebhook, verifyFathomWebhook } from "@meeting-context-router/source-fathom";
 import { fetchFirefliesTranscript, firefliesWebhookEventSchema, isFreshFirefliesEvent, verifyFirefliesWebhook } from "@meeting-context-router/source-fireflies";
 import { fetchGranolaNotes } from "@meeting-context-router/source-granola";
@@ -60,7 +69,7 @@ function principalAllows(principal: RequestPrincipal, scope: Scope): boolean {
   return principal.scopes.includes(scope) || principal.scopes.includes("admin");
 }
 
-export async function buildApp(config: RouterConfig, store = new JsonRouterStore(config.statePath, { key: config.stateKey, previousKey: config.statePreviousKey })) {
+export async function buildApp(config: RouterConfig, store = new JsonRouterStore(config.statePath, { key: config.stateKey, previousKey: config.statePreviousKey }, undefined, { outboundWebhook: config.outboundWebhook !== null })) {
   // Configuration failures surface at startup, not during a delivery attempt.
   if (config.crm.activityPath) {
     try {
@@ -68,6 +77,19 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
     } catch (error) {
       if (error instanceof CrmConfigurationError) throw new Error(`CRM destination is misconfigured: ${error.message}`);
       throw error;
+    }
+  }
+  if (config.outboundWebhook) {
+    try {
+      validateOutboundWebhookConfig(config.outboundWebhook);
+    } catch (error) {
+      if (error instanceof OutboundWebhookConfigurationError) throw new Error(`Outbound webhook is misconfigured: ${error.message}`);
+      throw error;
+    }
+    // One delivery call, all retries included, must finish inside its delivery
+    // lease, or a second caller could reclaim the lease while the first still sends.
+    if (outboundWebhookWorstCaseMs(config.outboundWebhook) >= config.deliveryLeaseSeconds * 1_000) {
+      throw new Error("Outbound webhook retry budget exceeds MEETING_ROUTER_DELIVERY_LEASE_SECONDS; lower the attempts, timeout or backoff, or raise the lease");
     }
   }
   await store.init();
@@ -328,6 +350,13 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
         const updated = await store.finishDelivery(id, attempt.id, "delivered", { destinationReceiptId: result.filename });
         return { data: { proposal: updated, artifact: basename(result.path), alreadyExisted: result.alreadyExisted } };
       }
+      if (proposal.target === "webhook") {
+        if (!config.outboundWebhook) throw new OutboundWebhookBlockedError("OUTBOUND_WEBHOOK_URL is not configured");
+        const result = await deliverOutboundWebhook(proposal, config.outboundWebhook);
+        const updated = await store.finishDelivery(id, attempt.id, "delivered", { destinationStatus: result.status, destinationReceiptId: result.receiptId });
+        auditAction(request, "proposal.delivered", { proposalId: id, attemptId: attempt.id, target: "webhook", destinationStatus: result.status, httpAttempts: result.attempts });
+        return { data: { proposal: updated, destinationStatus: result.status, destinationReceiptId: result.receiptId, httpAttempts: result.attempts } };
+      }
       const result = await deliverCrmProposal(proposal, config.crm);
       const updated = await store.finishDelivery(id, attempt.id, "delivered", { destinationStatus: result.status, destinationReceiptId: result.receiptId });
       auditAction(request, "proposal.delivered", { proposalId: id, attemptId: attempt.id, target: "crm", destinationStatus: result.status, replayed: result.replayed, matchedPersonCount: result.matchedPersonCount });
@@ -336,12 +365,13 @@ export async function buildApp(config: RouterConfig, store = new JsonRouterStore
       // Answers that will not change on retry (bad credential or scope, wrong
       // route, contract violation, idempotency conflict) are blocked for an
       // operator; transient CRM answers fall through to `failed` and may be retried.
-      const blocked = error instanceof CrmDeliveryBlockedError || error instanceof ObsidianArtifactConflictError || (error instanceof CrmDeliveryRejectedError && !error.retryable);
+      const blocked = error instanceof CrmDeliveryBlockedError || error instanceof ObsidianArtifactConflictError || (error instanceof CrmDeliveryRejectedError && !error.retryable) ||
+        error instanceof OutboundWebhookBlockedError || (error instanceof OutboundWebhookRejectedError && !error.retryable);
       if (blocked) {
         const updated = await store.finishDelivery(id, attempt.id, "blocked", { error: error.message });
         return reply.code(409).send({ data: { proposal: updated }, error: { code: "destination_blocked", message: error.message, requestId: request.id } });
       }
-      if (error instanceof CrmDeliveryAmbiguousError) {
+      if (error instanceof CrmDeliveryAmbiguousError || error instanceof OutboundWebhookAmbiguousError) {
         const updated = await store.finishDelivery(id, attempt.id, "unknown", { error: error.message });
         return reply.code(502).send({ data: { proposal: updated }, error: { code: "delivery_unknown", message: "Delivery result is unknown; reconcile before retrying", requestId: request.id } });
       }

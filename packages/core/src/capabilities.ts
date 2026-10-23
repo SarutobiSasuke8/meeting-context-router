@@ -2,7 +2,7 @@ import type { SourceKind } from "./schemas.js";
 
 export type Capability = "transcript" | "summary" | "actionItems" | "participants" |
   "attachments" | "webhooks" | "replaySafeIds";
-export type DestinationKind = "crm" | "obsidian";
+export type DestinationKind = "crm" | "obsidian" | "webhook";
 export type CapabilityManifest = Readonly<{
   id: string;
   direction: "source" | "destination";
@@ -21,6 +21,9 @@ export const sourceCapabilities: Readonly<Record<SourceKind | "fixtures", Capabi
 export const destinationCapabilities: Readonly<Record<DestinationKind, CapabilityManifest>> = {
   crm: { id: "crm", direction: "destination", supports: { transcript: false, summary: true, actionItems: true, participants: true, attachments: false, webhooks: false, replaySafeIds: true } },
   obsidian: { id: "obsidian", direction: "destination", supports: { transcript: false, summary: true, actionItems: true, participants: true, attachments: false, webhooks: false, replaySafeIds: true } },
+  // Generic outbound webhook (n8n, Zapier, custom consumers): HMAC-signed POST
+  // of the approved proposal, keyed by the proposal idempotency key.
+  webhook: { id: "webhook", direction: "destination", supports: { transcript: false, summary: true, actionItems: true, participants: true, attachments: false, webhooks: true, replaySafeIds: true } },
 };
 
 export class UnsupportedRouteError extends Error {}

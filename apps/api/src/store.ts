@@ -19,6 +19,7 @@ import {
   type ProposalStatus,
   type ProposalEdit,
   type RouterState,
+  type RoutingOptions,
   type RoutingProposal,
 } from "@meeting-context-router/core";
 
@@ -98,6 +99,7 @@ export class JsonRouterStore {
     private readonly path: string,
     encryption: Partial<StoreEncryptionOptions> = {},
     private readonly crmLookup?: CrmLookup,
+    private readonly routing: RoutingOptions = {},
   ) {
     this.encryption = { key: encryption.key ?? null, previousKey: encryption.previousKey ?? null };
   }
@@ -225,7 +227,7 @@ export class JsonRouterStore {
         }
         return { meeting: existing, proposals: state.proposals.filter((proposal) => proposal.meetingId === existing.id), duplicate: true };
       }
-      const proposals = createRoutingProposals(meeting, new Date().toISOString(), participantMatches);
+      const proposals = createRoutingProposals(meeting, new Date().toISOString(), participantMatches, this.routing);
       state.meetings.push(meeting);
       state.proposals.push(...proposals);
       return { meeting, proposals, duplicate: false };
