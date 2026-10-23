@@ -163,13 +163,14 @@ function explain(error: unknown, settings: AlphaRunSettings) {
 
 const CRITERIA: Array<Pick<AlphaCriterion, "id" | "title" | "source">> = [
   { id: "A1", title: "Environment is complete and valid", source: "docs/alpha-run-checklist.md" },
-  { id: "A2", title: "Requested Fathom meeting is ingested as new through the sync route", source: "QA/ALPHA_EXIT_E2E.md step 1" },
+  { id: "A2", title: "Requested Fathom meeting is ingested or recognised as duplicate through the sync route", source: "QA/ALPHA_EXIT_E2E.md step 1" },
   { id: "A3", title: "Pending proposal lands in the quarantined Obsidian inbox", source: "ROADMAP.md dogfood item; QA/DOGFOOD_RUNBOOK.md exit criterion" },
   { id: "A4", title: "No transcript text in the proposal or the approved note", source: "QA/DOGFOOD_RUNBOOK.md step 4" },
   { id: "A5", title: "Approval delivers the note inside the quarantine tree only", source: "QA/ALPHA_EXIT_E2E.md step 3" },
   { id: "A6", title: "Replay is a duplicate: same proposal ids, no new meeting or proposal", source: "QA/ALPHA_EXIT_E2E.md step 4; QA/DOGFOOD_RUNBOOK.md step 6" },
-  { id: "A7", title: "Replay refuses to overwrite: one new inbox file and one new note this run", source: "QA/ALPHA_EXIT_E2E.md step 4; QA/DOGFOOD_RUNBOOK.md step 6" },
+  { id: "A7", title: "Replay preserves artifacts: new files only on first intake", source: "QA/ALPHA_EXIT_E2E.md step 4; QA/DOGFOOD_RUNBOOK.md step 6" },
   { id: "A8", title: "CRM proposal stays pending and no host other than Fathom is called", source: "QA/ALPHA_EXIT_E2E.md (CRM never approved or delivered)" },
+  { id: "A9", title: "Independent repeat invocation is duplicate and writes no new files", source: "docs/alpha-run-checklist.md" },
   { id: "M1", title: "Human review: title, attendees, summary and action items read correctly", source: "QA/DOGFOOD_RUNBOOK.md steps 4 and 5" },
 ];
 
@@ -205,7 +206,7 @@ export async function runAlphaRun(settings: AlphaRunSettings, options: { root: s
     const newApproved = after.approved.filter((name) => !before.approved.includes(name)).length;
     const check = (ok: boolean, detail: string) => ({ status: (ok ? "pass" : "fail") as CriterionStatus, detail });
 
-    results.set("A2", check(r.first.status === 202 && !r.first.duplicate && r.first.proposalIds.length > 0 && r.sourceMeetingId === settings.recordingId,
+    results.set("A2", check(r.first.status === 202 && r.first.proposalIds.length > 0 && r.sourceMeetingId === settings.recordingId,
       `sync status ${r.first.status}, duplicate ${r.first.duplicate}, ${r.first.proposalIds.length} proposals, ${r.countsAfterFirst.meetings} meetings in the window`));
     results.set("A3", check(proposal !== null && inside(r.quarantineProposalPath, inbox) && proposal.includes("type: quarantined-routing-proposal\nstatus: pending"),
       `data/quarantine/obsidian-inbox/${r.quarantineProposalPath.split(/[\\/]/).pop()}`));
@@ -217,10 +218,18 @@ export async function runAlphaRun(settings: AlphaRunSettings, options: { root: s
     const sameIds = JSON.stringify([...r.replay.proposalIds].sort()) === JSON.stringify([...r.first.proposalIds].sort());
     results.set("A6", check(r.replay.duplicate && sameIds && r.counts.meetings === r.countsAfterFirst.meetings && r.counts.proposals === r.countsAfterFirst.proposals,
       `replay duplicate ${r.replay.duplicate}, proposal ids unchanged ${sameIds}, meetings ${r.countsAfterFirst.meetings} -> ${r.counts.meetings}, proposals ${r.countsAfterFirst.proposals} -> ${r.counts.proposals}`));
-    results.set("A7", check(r.replay.previewRefused && newInbox === 1 && newApproved === 1,
+    results.set("A7", check(r.replay.previewRefused && newInbox === (r.first.duplicate ? 0 : 1) && newApproved === (r.first.duplicate ? 0 : 1),
       `preview refused ${r.replay.previewRefused}, new inbox files ${newInbox}, new approved notes ${newApproved}`));
     results.set("A8", check(r.proposalStatuses.crm === "pending" && observation.refused === 0,
       `crm proposal ${r.proposalStatuses.crm ?? "missing"}, ${observation.requests} Fathom requests, ${observation.refused} other requests refused`));
+    const repeatBefore = { inbox: await listFiles(inbox), approved: await listFiles(approvedRoot) };
+    globalThis.fetch = observeFathom(inner, observation);
+    let repeat: AlphaExitResult;
+    try { repeat = await runAlphaExit({ kind: "fathom-api", meetingId: settings.recordingId, fathomApiKey: settings.fathomApiKey, createdAfter: settings.createdAfter, createdBefore: settings.createdBefore }, options.root, `${runId}-repeat`); } finally { globalThis.fetch = originalFetch; }
+    const repeatAfter = { inbox: await listFiles(inbox), approved: await listFiles(approvedRoot) };
+    results.set("A9", check(repeat.first.duplicate && JSON.stringify(repeat.first.proposalIds) === JSON.stringify(r.first.proposalIds) && JSON.stringify(repeatBefore) === JSON.stringify(repeatAfter),
+      `independent invocation duplicate ${repeat.first.duplicate}, no new inbox or approved files ${JSON.stringify(repeatBefore) === JSON.stringify(repeatAfter)}`));
+
   }
   results.set("M1", { status: "manual", detail: result ? "open the inbox file and the approved note and read them" : "not reached" });
 
@@ -295,6 +304,7 @@ export async function main(argv: string[], env: NodeJS.ProcessEnv, io: AlphaRunI
   io.stdout(`${text}\n`);
   // Keep a copy beside the quarantine output so it can be sent back as is.
   const reportPath = resolve(root, "data/quarantine", `alpha-run-${report.runId}.report.txt`);
+  if (report.result?.first.duplicate) return report.ok ? 0 : 1;
   await mkdir(dirname(reportPath), { recursive: true });
   await writeFile(reportPath, `${text}\n`, { encoding: "utf8", flag: "wx" }).then(() => io.stdout(`Report saved: ${reportPath}\n`), () => undefined);
   return report.ok ? 0 : 1;

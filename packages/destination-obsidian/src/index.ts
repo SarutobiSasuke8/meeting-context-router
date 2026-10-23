@@ -54,8 +54,9 @@ export function renderObsidianMeeting(proposal: RoutingProposal): { filename: st
     ? payload.actionItems.map((item) => `- [${item.completed ? "x" : " "}] ${safeText(item.description)}${item.assigneeName ? ` — ${safeText(item.assigneeName)}` : ""}`).join("\n")
     : "- None extracted";
 
+  const summary = payload.summary.replace(/^\s*#{1,6}\s+Summary\s*\r?\n(?:\s*\r?\n)*/i, "");
   const contentHash = sha256(stableJson(proposal.payload));
-  const markdown = `---\ntype: meeting-context\nmeeting_id: ${JSON.stringify(payload.meetingId)}\nsource: ${JSON.stringify(payload.source)}\nsource_meeting_id: ${JSON.stringify(payload.sourceMeetingId)}\nstarted_at: ${JSON.stringify(payload.startedAt)}\nrouter_proposal_id: ${JSON.stringify(proposal.id)}\nrouter_content_hash: ${JSON.stringify(contentHash)}\nmutability: review-first\n---\n\n# ${safeText(payload.title)}\n\n## Summary\n\n${safeText(payload.summary) || "No summary supplied."}\n\n## Participants\n\n${participantLines}\n\n## Decisions\n\n${decisionLines}\n\n## Action items\n\n${actionLines}\n\n## Provenance\n\n- Source: ${safeText(payload.source)}\n- Source meeting ID: ${safeText(payload.sourceMeetingId)}${payload.sourceUrl ? `\n- Source URL: ${payload.sourceUrl}` : ""}\n- Router proposal: ${proposal.id}\n`;
+  const markdown = `---\ntype: meeting-context\nmeeting_id: ${JSON.stringify(payload.meetingId)}\nsource: ${JSON.stringify(payload.source)}\nsource_meeting_id: ${JSON.stringify(payload.sourceMeetingId)}\nstarted_at: ${JSON.stringify(payload.startedAt)}\nrouter_proposal_id: ${JSON.stringify(proposal.id)}\nrouter_content_hash: ${JSON.stringify(contentHash)}\nmutability: review-first\n---\n\n# ${safeText(payload.title)}\n\n## Summary\n\n${safeText(summary) || "No summary supplied."}\n\n## Participants\n\n${participantLines}\n\n## Decisions\n\n${decisionLines}\n\n## Action items\n\n${actionLines}\n\n## Provenance\n\n- Source: ${safeText(payload.source)}\n- Source meeting ID: ${safeText(payload.sourceMeetingId)}${payload.sourceUrl ? `\n- Source URL: ${payload.sourceUrl}` : ""}\n- Router proposal: ${proposal.id}\n`;
   return { filename, markdown, contentHash };
 }
 
