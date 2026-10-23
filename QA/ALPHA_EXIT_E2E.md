@@ -32,6 +32,12 @@ to throw. It is part of `pnpm test`.
 
 ## Real meeting (owner run, not run by agents)
 
+Preferred: `pnpm alpha:run`, which wraps this flow with environment
+validation and a per-criterion pass/fail report. See
+[docs/alpha-run-checklist.md](../docs/alpha-run-checklist.md); the dry run is
+recorded in `QA/alpha-run-dry-run-2026-10-23.md`. The lower-level command
+below still works:
+
 ```bash
 FATHOM_API_KEY=... pnpm alpha-exit:fathom <recording-id> <created-after ISO> <created-before ISO>
 ```

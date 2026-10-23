@@ -24,6 +24,11 @@ export interface AlphaExitResult {
   first: { status: number; duplicate: boolean; proposalIds: string[] };
   replay: { status: number; duplicate: boolean; proposalIds: string[]; previewRefused: boolean };
   counts: { meetings: number; proposals: number; quarantineFiles: number; approvedFiles: number };
+  // Router totals straight after the first intake, so a caller can prove the
+  // replay added nothing.
+  countsAfterFirst: { meetings: number; proposals: number };
+  // Final status of each proposal for this meeting, keyed by target.
+  proposalStatuses: Record<string, string>;
 }
 
 const OPERATOR_TOKEN = randomBytes(24).toString("hex");
@@ -75,8 +80,14 @@ export async function runAlphaExit(intake: AlphaExitIntake, root: string, runId 
       return { status: response.statusCode, meetingId: meeting.id, proposalIds: proposals.filter((proposal) => proposal.meetingId === meeting.id).map((proposal) => proposal.id), duplicate: sync.created === 0 && sync.duplicates > 0 };
     }
 
+    const totals = async () => ({
+      meetings: (await app.inject({ method: "GET", url: "/v1/meetings", headers: auth })).json().total as number,
+      proposals: ((await app.inject({ method: "GET", url: "/v1/proposals", headers: auth })).json().data as RoutingProposal[]).length,
+    });
+
     const first = await ingest();
-    const proposals = (await app.inject({ method: "GET", url: "/v1/proposals", headers: auth })).json().data as RoutingProposal[];
+    const countsAfterFirst = await totals();
+    const proposals =(await app.inject({ method: "GET", url: "/v1/proposals", headers: auth })).json().data as RoutingProposal[];
     const obsidian = proposals.find((proposal) => proposal.target === "obsidian" && proposal.meetingId === first.meetingId);
     if (!obsidian || obsidian.status !== "pending") throw new Error("No pending Obsidian proposal after intake");
     const sourceMeetingId = (await readState(config.statePath)).meetings.find((meeting) => meeting.id === first.meetingId)!.provenance.sourceMeetingId;
@@ -95,15 +106,18 @@ export async function runAlphaExit(intake: AlphaExitIntake, root: string, runId 
     // 3. Replay the same meeting: no new meeting, proposal or file.
     const replay = await ingest();
     const previewRefused = await previewFathomExport(meetingExport, root).then(() => false, (error: NodeJS.ErrnoException) => error.code === "EEXIST");
-    const meetingsTotal = (await app.inject({ method: "GET", url: "/v1/meetings", headers: auth })).json().total as number;
-    const proposalsTotal = ((await app.inject({ method: "GET", url: "/v1/proposals", headers: auth })).json().data as RoutingProposal[]).length;
+    const final = await totals();
+    const finalProposals = (await app.inject({ method: "GET", url: "/v1/proposals", headers: auth })).json().data as RoutingProposal[];
+    const proposalStatuses = Object.fromEntries(finalProposals.filter((proposal) => proposal.meetingId === first.meetingId).map((proposal) => [proposal.target, proposal.status]));
     return {
       sourceMeetingId,
       quarantineProposalPath: preview.path,
       approvedNotePath,
       first: { status: first.status, duplicate: first.duplicate, proposalIds: first.proposalIds },
       replay: { status: replay.status, duplicate: replay.duplicate, proposalIds: replay.proposalIds, previewRefused },
-      counts: { meetings: meetingsTotal, proposals: proposalsTotal, quarantineFiles: (await readdir(inbox)).length, approvedFiles: (await readdir(approvedRoot)).length },
+      counts: { meetings: final.meetings, proposals: final.proposals, quarantineFiles: (await readdir(inbox)).length, approvedFiles: (await readdir(approvedRoot)).length },
+      countsAfterFirst,
+      proposalStatuses,
     };
   } finally {
     await app.close();
