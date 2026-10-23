@@ -1,0 +1,61 @@
+{
+  "_note": "Synthetic, scrubbed responses in the shape of GET https://api.fathom.ai/external/v1/meetings (include_summary, include_action_items, include_transcript). No real meeting content. Used by `pnpm alpha:run --dry-run`.",
+  "recordingId": "900000001",
+  "createdAfter": "2026-10-16T00:00:00.000Z",
+  "createdBefore": "2026-10-17T00:00:00.000Z",
+  "pages": [
+    {
+      "limit": 1,
+      "next_cursor": "fixture-cursor-page-2",
+      "items": [
+        {
+          "title": "Synthetic fixture: unrelated stand-up",
+          "recording_id": 900000002,
+          "url": "https://fathom.video/calls/900000002",
+          "share_url": "https://fathom.video/share/fixture-standup",
+          "created_at": "2026-10-16T08:15:00.000Z",
+          "scheduled_start_time": "2026-10-16T08:00:00.000Z",
+          "scheduled_end_time": "2026-10-16T08:15:00.000Z",
+          "calendar_invitees": [
+            { "name": "Fixture Teammate", "email": "teammate@example.invalid", "is_external": false }
+          ],
+          "default_summary": { "markdown_formatted": "Synthetic stand-up in the same sync window. It must be ingested but never previewed, approved or written." },
+          "action_items": [],
+          "transcript": [
+            { "speaker": { "display_name": "Fixture Teammate" }, "text": "Synthetic stand-up transcript marker: never written anywhere.", "timestamp": "00:00:30" }
+          ]
+        }
+      ]
+    },
+    {
+      "limit": 1,
+      "next_cursor": null,
+      "items": [
+        {
+          "title": "Synthetic fixture: alpha prototype review",
+          "recording_id": 900000001,
+          "url": "https://fathom.video/calls/900000001",
+          "share_url": "https://fathom.video/share/fixture-alpha-review",
+          "created_at": "2026-10-16T09:30:00.000Z",
+          "scheduled_start_time": "2026-10-16T09:00:00.000Z",
+          "scheduled_end_time": "2026-10-16T09:30:00.000Z",
+          "recording_start_time": "2026-10-16T09:01:00.000Z",
+          "recording_end_time": "2026-10-16T09:29:00.000Z",
+          "calendar_invitees": [
+            { "name": "Fixture Reviewer", "email": "reviewer@example.invalid", "is_external": false, "matched_speaker_display_name": "Fixture Reviewer" },
+            { "name": "Fixture Guest", "email": "guest@example.invalid", "is_external": true }
+          ],
+          "default_summary": { "markdown_formatted": "## Summary\n\nReview the local prototype before choosing any destination updates. This fixture contains no real meeting content." },
+          "action_items": [
+            { "description": "Review the quarantined alpha proposal", "completed": false, "recording_timestamp": "00:02:00", "assignee": { "name": "Fixture Reviewer", "email": "reviewer@example.invalid" } },
+            { "description": "Send the alpha run report back", "completed": false, "recording_timestamp": "00:12:30", "assignee": null }
+          ],
+          "transcript": [
+            { "speaker": { "display_name": "Fixture Reviewer", "matched_calendar_invitee_email": "reviewer@example.invalid" }, "text": "Synthetic transcript marker: this must not appear in the proposal or the note.", "timestamp": "00:02:00" },
+            { "speaker": { "display_name": "Fixture Guest" }, "text": "Second synthetic transcript line for the absence check.", "timestamp": "00:12:30" }
+          ]
+        }
+      ]
+    }
+  ]
+}
