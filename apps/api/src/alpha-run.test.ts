@@ -71,10 +71,10 @@ describe("alpha run dry run (recorded Fathom API fixture)", () => {
     const code = await main(["--dry-run"], validEnv, io, { root, runId: "test" });
     const text = out.join("");
     expect(text).toContain("dry run: recorded Fathom fixture, no credentials, no network");
-    for (const id of ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8"]) expect(text).toMatch(new RegExp(`\\[PASS\\] ${id} `));
+    for (const id of ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9"]) expect(text).toMatch(new RegExp(`\\[PASS\\] ${id} `));
     expect(text).toContain("[MANUAL] M1 ");
-    expect(text).toContain("Result: PASS (8/8 automated criteria passed)");
-    expect(text).toContain("Fathom requests 4, meetings returned across intake and replay 4");
+    expect(text).toContain("Result: PASS (9/9 automated criteria passed)");
+    expect(text).toContain("Fathom requests 8, meetings returned across intake and replay 8");
     expect(text).not.toContain(validEnv.FATHOM_API_KEY);
     expect(text).not.toContain("Synthetic transcript marker");
     expect(code).toBe(0);
@@ -87,8 +87,28 @@ describe("alpha run dry run (recorded Fathom API fixture)", () => {
     expect(approved).toHaveLength(1);
     const note = await readFile(resolve(root, "data/quarantine/obsidian-approved", approved[0]!), "utf8");
     expect(note).toContain("Synthetic fixture: alpha prototype review");
+    expect(note.match(/^## Summary$/gm)).toHaveLength(1);
+    const preview = await readFile(resolve(root, "data/quarantine/obsidian-inbox", inbox[0]!), "utf8");
+    const routerId = JSON.parse(note.match(/^router_proposal_id: (.+)$/m)![1]!);
+    expect(preview).toContain(`proposal_id: ${JSON.stringify(routerId)}`);
+    expect(preview).toContain(`router_proposal_id: ${JSON.stringify(routerId)}`);
+    expect(preview).toContain("Fathom api intake");
+    expect(preview).not.toContain("imported manually");
+
     expect(note).not.toContain("unrelated stand-up");
     expect(await readFile(resolve(root, "data/quarantine/alpha-run-test.report.txt"), "utf8")).toBe(text.split("Report saved:")[0]);
+  });
+
+  it("a separate command reports duplicate without adding reports or artifacts", async () => {
+    const root = await tempRoot();
+    const first = capture();
+    expect(await main(["--dry-run"], {}, first.io, { root, runId: "cli-one" })).toBe(0);
+    const before = await readdir(resolve(root, "data/quarantine"), { recursive: true });
+    const second = capture();
+    expect(await main(["--dry-run"], {}, second.io, { root, runId: "cli-two" })).toBe(0);
+    expect(second.out.join("")).toContain("duplicate true");
+    expect(second.out.join("")).not.toContain("Report saved:");
+    expect(await readdir(resolve(root, "data/quarantine"), { recursive: true })).toEqual(before);
   });
 
   it("fails A4 when transcript text reaches the proposal", async () => {
@@ -123,12 +143,13 @@ describe("alpha run dry run (recorded Fathom API fixture)", () => {
     const first = await runAlphaRun(settings, { root, runId: "one" });
     expect(first.ok).toBe(true);
     const earlier = await readFile(first.result!.quarantineProposalPath, "utf8");
-    // Each run has fresh router state and its own receive time, so the second
-    // run writes its own proposal and note; A7 counts only this run's files.
+    // A separate invocation reuses router state and preserves reviewed files.
     const second = await runAlphaRun(settings, { root, runId: "two" });
     expect(second.ok).toBe(true);
-    expect(second.criteria.find((criterion) => criterion.id === "A7")!.detail).toContain("new inbox files 1, new approved notes 1");
-    expect(await readdir(resolve(root, "data/quarantine/obsidian-inbox"))).toHaveLength(2);
+    expect(second.result!.first.duplicate).toBe(true);
+    expect(second.result!.first.proposalIds).toEqual(first.result!.first.proposalIds);
+    expect(second.criteria.find((criterion) => criterion.id === "A7")!.detail).toContain("new inbox files 0, new approved notes 0");
+    expect(await readdir(resolve(root, "data/quarantine/obsidian-inbox"))).toHaveLength(1);
     expect(await readFile(first.result!.quarantineProposalPath, "utf8")).toBe(earlier);
   });
 });

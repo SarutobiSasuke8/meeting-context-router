@@ -2,16 +2,17 @@ import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { renderObsidianMeeting } from "@meeting-context-router/destination-obsidian";
 import type { CanonicalMeeting, RoutingProposal } from "@meeting-context-router/core";
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config.js";
-import { previewFathomExport } from "./dogfood.js";
+import { previewRoutingProposal } from "./dogfood.js";
 
 // Alpha exit flow: one Fathom meeting becomes a pending proposal in the
 // quarantined Obsidian inbox, an approval writes it through the router, and a
 // replay of the same meeting creates no duplicate meeting, proposal or file.
 // Everything is written under `<root>/data/quarantine/`. The CRM proposal is
-// never approved or delivered, and the router state is a fresh file per run.
+// never approved or delivered, and router state persists across invocations within this quarantine root.
 
 export type AlphaExitIntake =
   | { kind: "fixture"; payload: unknown }
@@ -53,7 +54,7 @@ export async function runAlphaExit(intake: AlphaExitIntake, root: string, runId 
   const webhookSecret = `whsec_${randomBytes(32).toString("base64")}`;
   const config = loadConfig({
     NODE_ENV: "test",
-    MEETING_ROUTER_STATE_PATH: resolve(quarantine, `alpha-exit-state-${runId}.json`),
+    MEETING_ROUTER_STATE_PATH: resolve(quarantine, "alpha-exit-state.json"),
     OBSIDIAN_OUTPUT_ROOT: approvedRoot,
     FATHOM_WEBHOOK_SECRET: webhookSecret,
     ...(intake.kind === "fathom-api" ? { FATHOM_API_KEY: intake.fathomApiKey } : {}),
@@ -89,23 +90,35 @@ export async function runAlphaExit(intake: AlphaExitIntake, root: string, runId 
     const countsAfterFirst = await totals();
     const proposals =(await app.inject({ method: "GET", url: "/v1/proposals", headers: auth })).json().data as RoutingProposal[];
     const obsidian = proposals.find((proposal) => proposal.target === "obsidian" && proposal.meetingId === first.meetingId);
-    if (!obsidian || obsidian.status !== "pending") throw new Error("No pending Obsidian proposal after intake");
+    if (!obsidian || (!first.duplicate && obsidian.status !== "pending")) throw new Error("No pending Obsidian proposal after intake");
     const sourceMeetingId = (await readState(config.statePath)).meetings.find((meeting) => meeting.id === first.meetingId)!.provenance.sourceMeetingId;
 
     // 1. Pending proposal in the quarantined inbox for human review.
-    const meetingExport = intake.kind === "fixture" ? intake.payload : await exportFromState(config.statePath, first.meetingId);
-    const preview = await previewFathomExport(meetingExport, root);
+    const meeting = (await readState(config.statePath)).meetings.find((candidate) => candidate.id === first.meetingId)!;
+    const previewPath = resolve(inbox, `fathom-${meeting.provenance.sourceHash}.proposal.md`);
+    const preview = first.duplicate
+      ? { path: previewPath }
+      : await previewRoutingProposal(obsidian, root, meeting.provenance.sourceHash, meeting.provenance.transport);
 
     // 2. Approval, then delivery writes the note.
-    const approve = await app.inject({ method: "POST", url: `/v1/proposals/${obsidian.id}/approve`, headers: auth });
-    if (approve.statusCode !== 200) throw new Error(`Approve returned ${approve.statusCode}`);
-    const deliver = await app.inject({ method: "POST", url: `/v1/proposals/${obsidian.id}/deliver`, headers: auth });
-    if (deliver.statusCode !== 200) throw new Error(`Deliver returned ${deliver.statusCode}`);
-    const approvedNotePath = resolve(approvedRoot, deliver.json().data.artifact as string);
+    let approvedNotePath: string;
+    if (first.duplicate) {
+      if (obsidian.status !== "delivered") throw new Error("Existing proposal is not delivered; preserve its review state and resume in the workbench");
+      approvedNotePath = resolve(approvedRoot, renderObsidianMeeting(obsidian).filename);
+      // A replay must verify existing artifacts rather than silently recreating them.
+      await readFile(preview.path);
+      await readFile(approvedNotePath);
+    } else {
+      const approve = await app.inject({ method: "POST", url: `/v1/proposals/${obsidian.id}/approve`, headers: auth });
+      if (approve.statusCode !== 200) throw new Error(`Approve returned ${approve.statusCode}`);
+      const deliver = await app.inject({ method: "POST", url: `/v1/proposals/${obsidian.id}/deliver`, headers: auth });
+      if (deliver.statusCode !== 200) throw new Error(`Deliver returned ${deliver.statusCode}`);
+      approvedNotePath = resolve(approvedRoot, deliver.json().data.artifact as string);
+    }
 
     // 3. Replay the same meeting: no new meeting, proposal or file.
     const replay = await ingest();
-    const previewRefused = await previewFathomExport(meetingExport, root).then(() => false, (error: NodeJS.ErrnoException) => error.code === "EEXIST");
+    const previewRefused = await previewRoutingProposal(obsidian, root, meeting.provenance.sourceHash, meeting.provenance.transport).then(() => false, (error: NodeJS.ErrnoException) => error.code === "EEXIST");
     const final = await totals();
     const finalProposals = (await app.inject({ method: "GET", url: "/v1/proposals", headers: auth })).json().data as RoutingProposal[];
     const proposalStatuses = Object.fromEntries(finalProposals.filter((proposal) => proposal.meetingId === first.meetingId).map((proposal) => [proposal.target, proposal.status]));
@@ -124,25 +137,8 @@ export async function runAlphaExit(intake: AlphaExitIntake, root: string, runId 
   }
 }
 
-// The API path has no raw export to preview, so rebuild the Fathom-shaped
-// fields the preview needs from the router's own stored meeting.
 async function readState(statePath: string) {
   return JSON.parse(await readFile(statePath, "utf8")) as { meetings: CanonicalMeeting[] };
-}
-
-async function exportFromState(statePath: string, meetingId: string) {
-  const meeting = (await readState(statePath)).meetings.find((candidate) => candidate.id === meetingId)!;
-  return {
-    title: meeting.title,
-    recording_id: meeting.provenance.sourceMeetingId,
-    share_url: meeting.provenance.sourceUrl,
-    created_at: meeting.createdAt,
-    scheduled_start_time: meeting.startedAt,
-    scheduled_end_time: meeting.endedAt,
-    calendar_invitees: meeting.participants.map((person) => ({ name: person.name, email: person.email, is_external: person.external })),
-    default_summary: { markdown_formatted: meeting.summary },
-    action_items: meeting.actionItems.map((item) => ({ description: item.description, completed: item.completed, recording_timestamp: item.evidenceTimestamp, assignee: item.assigneeName ? { name: item.assigneeName, email: item.assigneeEmail } : null })),
-  };
 }
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");

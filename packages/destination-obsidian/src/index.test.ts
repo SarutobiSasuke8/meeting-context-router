@@ -99,3 +99,11 @@ describe("Obsidian destination", () => {
     expect(rendered.markdown).toContain("mutability: review-first");
   });
 });
+
+ describe("summary heading normalisation", () => {
+  it.each(["## Summary\n\nUseful summary.", "# Summary\r\nUseful summary.", "Useful summary."])("renders one Summary heading for %s", (summary) => {
+    const text = renderObsidianMeeting({ ...proposal, payload: { ...proposal.payload, summary } }).markdown;
+    expect(text.match(/^## Summary$/gm)).toHaveLength(1);
+    expect(text).toContain("Useful summary.");
+  });
+ });
