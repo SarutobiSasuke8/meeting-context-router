@@ -316,7 +316,7 @@ The Obsidian adapter writes only inside `OBSIDIAN_OUTPUT_ROOT`. The default is t
 
 ## Agent CRM
 
-Approved CRM proposals are delivered to [Agent CRM](https://github.com/SarutobiSasuke8/agent-crm) through its meeting activity endpoint (`POST /v1/activities/meetings`, contract version 1). The CRM stores one append-only activity per meeting, matches participants to existing people by email without creating or merging anyone, and never accepts a transcript.
+Approved CRM proposals are delivered to Agent CRM (a private companion service) through its meeting activity endpoint (`POST /v1/activities/meetings`, contract version 1). The CRM stores one append-only activity per meeting, matches participants to existing people by email without creating or merging anyone, and never accepts a transcript.
 
 | Variable | Default | Meaning |
 |---|---|---|
