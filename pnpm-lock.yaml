@@ -72,9 +72,6 @@ importers:
 
   apps/mcp:
     dependencies:
-      '@meeting-context-router/core':
-        specifier: workspace:*
-        version: link:../../packages/core
       '@modelcontextprotocol/server':
         specifier: 2.0.0
         version: 2.0.0
@@ -82,6 +79,12 @@ importers:
         specifier: ^4.1.5
         version: 4.4.3
     devDependencies:
+      '@meeting-context-router/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       tsx:
         specifier: ^4.20.5
         version: 4.23.12
